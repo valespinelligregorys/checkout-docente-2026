@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f7f5ed" />
+  <meta name="description" content="Un recorrido sensible para cerrar el año en el jardín: mirar lo vivido, descubrir tu perfil pedagógico y escuchar tu banda sonora." />
+  <meta property="og:title" content="Lo que hicimos crecer · Check-out docente 2026" />
+  <meta property="og:description" content="Una experiencia de cierre de año para docentes de Nivel Inicial." />
+  <title>Lo que hicimos crecer · Check-out 2026</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,400,50,1;9..144,500,50,1;9..144,600,50,1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="site-shell">
+    <header class="topbar">
+      <button id="logoButton" class="brand" type="button" aria-label="Volver al inicio">
+        <span class="brand-mark" aria-hidden="true">✳</span>
+        <span><strong>Lo que hicimos crecer</strong><small>check-out docente · <span data-year>2026</span></small></span>
+      </button>
+      <div class="top-actions">
+        <span class="top-note">Nivel Inicial <span aria-hidden="true">·</span> cierre de ciclo</span>
+        <button id="navMap" class="text-button" type="button">Nuestro jardín <span aria-hidden="true">↗</span></button>
+      </div>
+    </header>
+
+    <main id="app" aria-live="polite"></main>
+    <footer class="site-footer"><span>Un cierre para reconocer lo que se aprendió, incluso cuando fue difícil.</span><span>Creado para equipos de Nivel Inicial <span aria-hidden="true">✳</span></span></footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
