@@ -23,14 +23,62 @@ const API_URL=(CONFIG.appsScriptUrl||'').trim();
 const ONLINE=/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(API_URL);
 const PRIORITIES={exploradora:'Explorar nuevas preguntas y formatos',tejedora:'Profundizar la colaboración y el cuidado mutuo',observadora:'Documentar los procesos de aprendizaje',arquitecta:'Afinar la planificación y la evaluación'};
 let autoRefresh=null;
+// v2: guardado local de cada decisión y texto, sin enviar datos personales.
+const SAVE_KEY='checkout_docente_2026_borrador_v2';
+let saveAvailable=true;
+function persist(){
+  try{localStorage.setItem(SAVE_KEY,JSON.stringify({version:2,updatedAt:new Date().toISOString(),index:state.index,choices:state.choices,reflections:state.reflections,name:state.name,room:state.room,submissionId:state.submissionId,confirmed:state.confirmed,sharedPhrase:state.sharedPhrase,sharePhrase:state.sharePhrase}));}
+  catch(err){saveAvailable=false;}
+}
+function restoreLocal(){
+  try{
+    const raw=localStorage.getItem(SAVE_KEY);if(!raw)return false;
+    const v=JSON.parse(raw);
+    if(!v||!Array.isArray(v.choices)||v.choices.length!==8||!Array.isArray(v.reflections)||v.reflections.length!==8)return false;
+    state.choices=v.choices.map(x=>Object.hasOwn(profiles,x)?x:null);
+    state.reflections=v.reflections.map(x=>String(x||'').slice(0,1500));
+    state.index=Math.max(0,Math.min(7,Number(v.index)||0));
+    state.name=String(v.name||'').slice(0,80);state.room=String(v.room||'').slice(0,80);
+    state.submissionId=v.submissionId||null;state.confirmed=!!v.confirmed;
+    state.sharedPhrase=String(v.sharedPhrase||'').slice(0,160);state.sharePhrase=!!v.sharePhrase;
+    return true;
+  }catch(err){return false;}
+}
+function hasProgress(){return state.choices.some(Boolean)||state.reflections.some(Boolean)||state.name||state.room;}
+function resume(){state.index=state.choices.findIndex(v=>!v);if(state.index<0)result();else question();}
+function importBackup(file){
+  if(!file)return;
+  const reader=new FileReader();reader.onload=()=>{
+    try{
+      const v=JSON.parse(reader.result);
+      if(v.type!=='checkout_docente_2026'||!Array.isArray(v.answers)||v.answers.length!==8)throw Error('Formato de bitácora no reconocido');
+      state.choices=v.answers.map(a=>Object.hasOwn(profiles,a.choice)?a.choice:null);
+      state.reflections=v.answers.map(a=>String(a.reflection||'').slice(0,1500));
+      state.name=String(v.name||'').slice(0,80);state.room=String(v.room||'').slice(0,80);
+      state.submissionId=null;state.confirmed=false;state.index=0;persist();resume();
+      toast('Bitácora recuperada');
+    }catch(err){alert('No se pudo importar. Elegí el archivo .json de la bitácora descargada.');}
+  };reader.readAsText(file);
+}
+function bindRecovery(){
+  const inp=$('#restoreBackup');if(inp)inp.onchange=e=>importBackup(e.target.files[0]);
+  const b=$('#resume');if(b)b.onclick=resume;
+  const reset=$('#startNew');if(reset)reset.onclick=()=>{
+    if(!confirm('¿Empezar otro recorrido? Se reemplazará el borrador guardado en este dispositivo. Antes podés descargar tu bitácora si completaste las preguntas.'))return;
+    Object.assign(state,{index:0,choices:Array(8).fill(null),reflections:Array(8).fill(''),name:'',room:'',submissionId:null,confirmed:false,sharedPhrase:'',sharePhrase:false});persist();intro();
+  };
+}
+window.addEventListener('pagehide',persist);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persist()});
+
 
 const dateLabel=()=>new Intl.DateTimeFormat('es-AR',{day:'numeric',month:'long',year:'numeric'}).format(new Date());
 function toast(s){const t=$('#toast');t.textContent=s;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
 function scrollTop(){window.scrollTo({top:0,behavior:'smooth'})}
 function view(html){if(autoRefresh){clearInterval(autoRefresh);autoRefresh=null;}app.innerHTML=html;scrollTop()}
-function home(){state.screen='home';view(`<section class="hero"><div><span class="eyebrow">Un recorrido para cerrar el ciclo</span><h1>Lo que<br><em>hicimos crecer.</em></h1><p class="lead">Cada año deja huellas: preguntas, hallazgos, vínculos y desafíos. Este es un espacio para mirar el camino recorrido y elegir qué queremos llevarnos.</p><div class="buttons"><button class="btn" id="start">Comenzar mi check-out ↗</button><button class="btn secondary" id="gotoMap">Nuestro jardín colectivo</button></div><p class="micro">15–20 minutos · 8 elecciones + reflexiones · un perfil pedagógico y su banda sonora</p></div><div class="illustration" aria-hidden="true"><div class="orbit"></div><span class="flower">🌼</span><span class="tiny top">mirar lo vivido ✳</span><span class="tiny bottom">sembrar lo que viene</span></div></section><section class="features"><div class="feature"><span class="icon">🌱</span><strong>Un recorrido propio</strong><p>Cuatro estaciones con preguntas para recuperar la experiencia cotidiana.</p></div><div class="feature"><span class="icon">🎧</span><strong>Un perfil y una playlist</strong><p>Un retrato lúdico de las fortalezas que aportás al equipo, acompañado de canciones.</p></div><div class="feature"><span class="icon">🪴</span><strong>Una lectura compartida</strong><p>El mapa se actualiza con los aportes anónimos que cada docente decida compartir.</p></div></section><p class="micro">Las reflexiones personales quedan en tu dispositivo. Solo si lo autorizás, se compartirán tu perfil, la intención elegida y una frase voluntaria para el mapa público.</p>`);$('#start').onclick=()=>intro();$('#gotoMap').onclick=()=>mapView()}
-function intro(){state.screen='intro';view(`<section class="session"><span class="eyebrow">Antes de comenzar</span><h2>Una mirada situada, sin respuestas correctas.</h2><p>Este check-out no es una evaluación de desempeño ni un diagnóstico. Es una invitación a reconocer decisiones, tensiones y aprendizajes de la práctica docente.</p><label class="field-label" for="name">Tu nombre (opcional)</label><input type="text" id="name" maxlength="80" placeholder="¿Cómo querés firmar tu bitácora?" value="${escapeHTML(state.name)}"><label class="field-label" for="room">Sala / rol (opcional)</label><input type="text" id="room" maxlength="80" placeholder="Por ejemplo: Kinder 4 / docente de Música" value="${escapeHTML(state.room)}"><div class="callout">Los perfiles son metáforas pedagógicas: todas las personas podemos reconocer algo de cada uno. No se usarán para calificar ni comparar docentes.</div><div class="buttons"><button class="btn" id="next">Entrar al recorrido →</button><button class="btn secondary" id="back">Volver</button></div></section>`);$('#next').onclick=()=>{state.name=$('#name').value.trim();state.room=$('#room').value.trim();state.index=0;question()};$('#back').onclick=home}
-function question(){state.screen='question';const i=state.index,q=questions[i];const options=q.options.map(([key,label],j)=>`<button class="option ${state.choices[i]===key?'selected':''}" data-value="${key}" aria-pressed="${state.choices[i]===key}"><span class="number">${String(j+1).padStart(2,'0')}</span><span>${escapeHTML(label)}</span></button>`).join('');view(`<section class="session"><div class="progress" aria-label="Progreso: ${i+1} de 8">${questions.map((_,j)=>`<span class="${j<=i?'active':''}"></span>`).join('')}</div><span class="station-tag">${escapeHTML(q.station)}</span><p class="question-count">Estación ${Math.floor(i/2)+1} de 4 · pregunta ${i+1} de 8</p><h2>${escapeHTML(q.title)}</h2><p class="muted">${escapeHTML(q.subtitle||'Elegí la respuesta con la que más te identificás hoy.')}</p><div class="options">${options}</div><label class="field-label" for="reflection">${escapeHTML(q.reflection)}</label><p class="field-hint">Respuesta libre. Podés escribir una frase o desarrollar una reflexión.</p><textarea id="reflection" maxlength="1500" placeholder="Escribí acá…">${escapeHTML(state.reflections[i])}</textarea><div class="step-footer"><button class="btn secondary" id="back">← Anterior</button><button class="btn" id="next" ${!state.choices[i]?'disabled':''}>${i===7?'Descubrir mi perfil ✳':'Continuar →'}</button></div></section>`);document.querySelectorAll('.option').forEach(b=>b.onclick=()=>{state.choices[i]=b.dataset.value;document.querySelectorAll('.option').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b))});$('#next').disabled=false});$('#reflection').oninput=e=>state.reflections[i]=e.target.value;$('#back').onclick=()=>{if(i===0)intro();else{state.index--;question()}};$('#next').onclick=()=>{state.reflections[i]=$('#reflection').value;if(i<7){state.index++;question()}else result()}}
+function home(){state.screen='home';view(`<section class="hero"><div><span class="eyebrow">Un recorrido para cerrar el ciclo</span><h1>Lo que<br><em>hicimos crecer.</em></h1><p class="lead">Cada año deja huellas: preguntas, hallazgos, vínculos y desafíos. Este es un espacio para mirar el camino recorrido y elegir qué queremos llevarnos.</p><div class="buttons"><button class="btn" id="start">Comenzar mi check-out ↗</button><button class="btn secondary" id="gotoMap">Nuestro jardín colectivo</button></div><p class="micro">15–20 minutos · 8 elecciones + reflexiones · un perfil pedagógico y su banda sonora</p></div><div class="illustration" aria-hidden="true"><div class="orbit"></div><span class="flower">🌼</span><span class="tiny top">mirar lo vivido ✳</span><span class="tiny bottom">sembrar lo que viene</span></div></section><section class="panel no-print" id="recoveryPanel"><span class="eyebrow">Tu recorrido queda guardado en este dispositivo</span><h3>Continuá sin empezar de nuevo</h3><p>Las respuestas se guardan automáticamente en este navegador. Si cambiás de teléfono, navegador o borrás los datos del sitio, no estarán disponibles aquí. También podés recuperar una bitácora .json descargada anteriormente.</p><div class="buttons"><button class="btn" id="resume" type="button">Continuar mi recorrido guardado →</button><button class="btn secondary" id="startNew" type="button">Empezar un recorrido nuevo</button></div><label class="field-label" for="restoreBackup">Recuperar una bitácora .json</label><input type="file" id="restoreBackup" accept="application/json,.json"><p class="micro">Si tenés una bitácora completa, se abre tu resultado y podés intentar compartir su aporte sin repetir las preguntas.</p></section><section class="features"><div class="feature"><span class="icon">🌱</span><strong>Un recorrido propio</strong><p>Cuatro estaciones con preguntas para recuperar la experiencia cotidiana.</p></div><div class="feature"><span class="icon">🎧</span><strong>Un perfil y una playlist</strong><p>Un retrato lúdico de las fortalezas que aportás al equipo, acompañado de canciones.</p></div><div class="feature"><span class="icon">🪴</span><strong>Una lectura compartida</strong><p>El mapa se actualiza con los aportes anónimos que cada docente decida compartir.</p></div></section><p class="micro">Las reflexiones personales quedan en tu dispositivo. Solo si lo autorizás, se compartirán tu perfil, la intención elegida y una frase voluntaria para el mapa público.</p>`);$('#start').onclick=()=>{if(hasProgress())resume();else intro()};$('#gotoMap').onclick=mapView;bindRecovery();if(!hasProgress()){$('#resume').disabled=true;$('#resume').textContent='Todavía no hay un recorrido guardado';}else{$('#start').textContent='Continuar mi check-out ↗';}if(!saveAvailable)$('#recoveryPanel').insertAdjacentHTML('beforeend','<p class="micro">Este navegador tiene bloqueado el guardado automático. Descargá tu bitácora como respaldo.</p>');}
+function intro(){state.screen='intro';view(`<section class="session"><span class="eyebrow">Antes de comenzar</span><h2>Una mirada situada, sin respuestas correctas.</h2><p>Este check-out no es una evaluación de desempeño ni un diagnóstico. Es una invitación a reconocer decisiones, tensiones y aprendizajes de la práctica docente.</p><label class="field-label" for="name">Tu nombre (opcional)</label><input type="text" id="name" maxlength="80" placeholder="¿Cómo querés firmar tu bitácora?" value="${escapeHTML(state.name)}"><label class="field-label" for="room">Sala / rol (opcional)</label><input type="text" id="room" maxlength="80" placeholder="Por ejemplo: Kinder 4 / docente de Música" value="${escapeHTML(state.room)}"><div class="callout">Los perfiles son metáforas pedagógicas: todas las personas podemos reconocer algo de cada uno. No se usarán para calificar ni comparar docentes.</div><div class="buttons"><button class="btn" id="next">Entrar al recorrido →</button><button class="btn secondary" id="back">Volver</button></div></section>`);$('#next').onclick=()=>{state.name=$('#name').value.trim();state.room=$('#room').value.trim();state.index=0;persist();question()};$('#name').oninput=e=>{state.name=e.target.value;persist()};$('#room').oninput=e=>{state.room=e.target.value;persist()};$('#back').onclick=home}
+function question(){state.screen='question';const i=state.index,q=questions[i];const options=q.options.map(([key,label],j)=>`<button class="option ${state.choices[i]===key?'selected':''}" data-value="${key}" aria-pressed="${state.choices[i]===key}"><span class="number">${String(j+1).padStart(2,'0')}</span><span>${escapeHTML(label)}</span></button>`).join('');view(`<section class="session"><div class="progress" aria-label="Progreso: ${i+1} de 8">${questions.map((_,j)=>`<span class="${j<=i?'active':''}"></span>`).join('')}</div><span class="station-tag">${escapeHTML(q.station)}</span><p class="question-count">Estación ${Math.floor(i/2)+1} de 4 · pregunta ${i+1} de 8</p><h2>${escapeHTML(q.title)}</h2><p class="muted">${escapeHTML(q.subtitle||'Elegí la respuesta con la que más te identificás hoy.')}</p><div class="options">${options}</div><label class="field-label" for="reflection">${escapeHTML(q.reflection)}</label><p class="field-hint">Respuesta libre. Podés escribir una frase o desarrollar una reflexión.</p><textarea id="reflection" maxlength="1500" placeholder="Escribí acá…">${escapeHTML(state.reflections[i])}</textarea><div class="step-footer"><button class="btn secondary" id="back">← Anterior</button><button class="btn" id="next" ${!state.choices[i]?'disabled':''}>${i===7?'Descubrir mi perfil ✳':'Continuar →'}</button></div></section>`);document.querySelectorAll('.option').forEach(b=>b.onclick=()=>{state.choices[i]=b.dataset.value;persist();document.querySelectorAll('.option').forEach(x=>{x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b))});$('#next').disabled=false});$('#reflection').oninput=e=>{state.reflections[i]=e.target.value;persist()};$('#back').onclick=()=>{if(i===0)intro();else{state.index--;persist();question()}};$('#next').onclick=()=>{state.reflections[i]=$('#reflection').value;persist();if(i<7){state.index++;persist();question()}else result()}}
 function calculate(choices){const counts=Object.fromEntries(Object.keys(profiles).map(k=>[k,0]));choices.forEach(c=>{if(counts[c]!==undefined)counts[c]++});const priority=['exploradora','tejedora','arquitecta','observadora'];const sorted=priority.sort((a,b)=>counts[b]-counts[a]);return{key:sorted[0],counts,secondary:sorted[1]}}
 function payload(){const r=calculate(state.choices);return{type:'checkout_docente_2026',version:1,createdAt:new Date().toISOString(),name:state.name,room:state.room,profile:r.key,counts:r.counts,answers:questions.map((q,i)=>({station:q.station,question:q.title,choice:state.choices[i],reflection:state.reflections[i]}))}}
 function download(){const name=(state.name||'docente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9-]+/g,'-').toLowerCase().slice(0,40);const blob=new Blob([JSON.stringify(payload(),null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`checkout-2026-${name}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);toast('Bitácora descargada')}
@@ -65,15 +113,33 @@ function jsonp(params={}){
   });
 }
 async function postContribution(fields){
-  const response=await fetch(API_URL,{method:'POST',mode:'no-cors',body:new URLSearchParams(fields)});
-  // La respuesta del POST es opaca. No la tomamos como prueba de envío.
-  return response;
+  // Envío mediante formulario HTML a iframe oculto: evita la limitación de fetch no-cors
+  // y funciona también desde Safari móvil. La confirmación SIEMPRE se comprueba con doGet.
+  return new Promise((resolve,reject)=>{
+    const frame=document.createElement('iframe');frame.name='checkout_write_'+Date.now();
+    frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
+    frame.style.cssText='position:absolute;width:1px;height:1px;left:-9999px;border:0';
+    const form=document.createElement('form');form.method='POST';form.action=API_URL;form.target=frame.name;
+    form.style.display='none';
+    for(const [key,value] of Object.entries(fields)){
+      const input=document.createElement('input');input.type='hidden';input.name=key;input.value=String(value);form.append(input);
+    }
+    let settled=false;
+    const clean=()=>setTimeout(()=>{form.remove();frame.remove()},25000);
+    frame.addEventListener('load',()=>{
+      // No dependemos del contenido del iframe (otro dominio): la lectura verificará el registro.
+      if(!settled){settled=true;clean();resolve();}
+    });
+    document.body.append(frame,form);
+    try{form.submit();setTimeout(()=>{if(!settled){settled=true;clean();resolve();}},2500)}
+    catch(error){clean();reject(error)}
+  });
 }
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function confirmContribution(id){
-  for(let attempt=0;attempt<4;attempt++){
-    if(attempt)await sleep(1200*attempt);
-    try{const data=await jsonp({check:id});if(data.ok && data.confirmed)return true;}catch(error){if(attempt===3)throw error;}
+  for(let attempt=0;attempt<7;attempt++){
+    if(attempt)await sleep(1000+550*attempt);
+    try{const data=await jsonp({check:id});if(data.ok && data.confirmed)return true;}catch(error){if(attempt===6)throw error;}
   }
   return false;
 }
@@ -100,19 +166,19 @@ function bindShare(){
     const consent=$('#consentProfile').checked;
     const code=$('#groupCode').value.trim();
     state.sharedPhrase=$('#shareQuote').value.trim();
-    state.sharePhrase=$('#consentPhrase').checked;
+    state.sharePhrase=$('#consentPhrase').checked;persist();
     const phrase=state.sharePhrase?state.sharedPhrase:'';
     const status=$('#shareStatus'),button=$('#sendMap');
     if(!consent){status.textContent='Para sumar tu perfil, primero elegí voluntariamente compartirlo.';return;}
     if(!code){status.textContent='Ingresá el código del equipo para enviar el aporte.';return;}
     if(state.sharePhrase&&!phrase){status.textContent='Escribí una frase o desmarcá la autorización para publicarla.';return;}
-    if(!state.submissionId)state.submissionId=newSubmissionId();
+    if(!state.submissionId)state.submissionId=newSubmissionId();persist();
     button.disabled=true;status.textContent='Enviando tu aporte y verificando que se haya registrado…';
     try{
       await postContribution({id:state.submissionId,code,profile:calculate(state.choices).key,priority:state.choices[6],phrase});
       const confirmed=await confirmContribution(state.submissionId);
       if(!confirmed)throw Error('No pudimos confirmar el registro. Revisá el código del equipo y volvé a intentarlo.');
-      state.confirmed=true;
+      state.confirmed=true;persist();
       status.textContent='¡Tu aporte anónimo quedó registrado!';
       $('#sharePanel').innerHTML=`<span class="eyebrow">¡Una huella más!</span><h3>Tu aporte ya forma parte de nuestro jardín 🌱</h3><p>No se enviaron tu nombre, tu sala ni las respuestas abiertas. Gracias por compartir.</p><div class="buttons"><button class="btn" type="button" id="seeShared">Ver nuestro jardín colectivo →</button></div>`;
       $('#seeShared').onclick=mapView;
@@ -135,7 +201,7 @@ function result(){
     ${state.confirmed?`<div class="panel no-print"><h3>¡Tu huella ya está en el mapa! 🌿</h3><button class="btn" id="viewAfterShare">Ver jardín colectivo →</button></div>`:shareUI()}
     <div class="buttons no-print"><button class="btn secondary" id="map">Ver jardín colectivo →</button></div>
   </section>`);
-  $('#download').onclick=download;$('#print').onclick=()=>window.print();$('#map').onclick=mapView;$('#edit').onclick=()=>{state.index=0;question()};
+  $('#download').onclick=download;$('#print').onclick=()=>window.print();$('#map').onclick=mapView;$('#edit').onclick=()=>{state.index=0;persist();question()};persist();
   if(state.confirmed)$('#viewAfterShare').onclick=mapView;else bindShare();
 }
 function mapView(){
@@ -192,4 +258,5 @@ function exportSummary(){
 }
 $('#logoButton').onclick=home;
 $('#navMap').onclick=mapView;
+restoreLocal();
 home();
