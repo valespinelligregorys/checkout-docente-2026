@@ -182,22 +182,44 @@ async function downloadPDF(){
     const blob=makePDFBlob();
     const slug=(state.name||'docente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9-]+/g,'-').toLowerCase().slice(0,40);
     const filename='bitacora-checkout-2026-'+slug+'.pdf';
-    const file=new File([blob],filename,{type:'application/pdf'});
-    // iPhone: hoja Compartir permite guardar explícitamente en Archivos.
-    if(navigator.canShare?.({files:[file]})&&navigator.share){
-      await navigator.share({files:[file],title:'Mi bitácora docente 2026'});
-      toast('Elegí Guardar en Archivos desde Compartir.');
-    }else{
-      const url=URL.createObjectURL(blob);
-      const anchor=document.createElement('a');anchor.href=url;anchor.download=filename;
-      document.body.append(anchor);anchor.click();anchor.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),60000);
-      toast('PDF generado. Revisá Descargas.');
+    // Solo el iPhone/iPad usa Compartir; en Mac Safari no debe invocar navigator.share().
+    const isIOS=/iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+    if(isIOS && navigator.share && navigator.canShare){
+      const file=new File([blob],filename,{type:'application/pdf'});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file],title:'Mi bitácora docente 2026'});
+        toast('En iPhone, elegí Guardar en Archivos.');
+        return;
+      }
     }
+    // Safari de macOS / Chrome / Firefox: descarga real, sin menú Compartir ni Imprimir.
+    const url=URL.createObjectURL(blob);
+    const anchor=document.createElement('a');
+    anchor.href=url;anchor.download=filename;anchor.style.display='none';
+    document.body.appendChild(anchor);anchor.click();anchor.remove();
+    // Alternativa manual para Safari si no respeta la descarga automática.
+    // Se mantiene mientras siga visible la pantalla; no modifica las respuestas.
+    const existing=document.getElementById('pdfFallback');
+    if(existing)existing.remove();
+    const fallback=document.createElement('div');
+    fallback.id='pdfFallback';fallback.className='no-print';
+    fallback.style.cssText='margin-top:12px;padding:12px;border:1px solid #cad3c6;border-radius:12px';
+    const note=document.createElement('p');
+    note.textContent='Si el PDF no apareció en Descargas, abrilo con este enlace y luego usá Archivo → Guardar (⌘S) en Safari:';
+    const link=document.createElement('a');
+    link.href=url;link.target='_blank';link.rel='noopener';
+    link.textContent='Abrir mi bitácora PDF para guardarla ↗';
+    link.style.cssText='display:inline-block;font-weight:700;margin-top:4px';
+    fallback.append(note,link);
+    button?.closest('.buttons')?.insertAdjacentElement('afterend',fallback);
+    setTimeout(()=>{URL.revokeObjectURL(url);fallback.remove()},10*60*1000);
+    toast('PDF generado: revisá Descargas.');
   }catch(error){
     if(error?.name!=='AbortError')alert('No se pudo guardar el PDF: '+(error.message||'Error desconocido'));
   }finally{if(button)button.disabled=false;}
 }
+
 // Conexión: las respuestas largas, los nombres y la sala NUNCA se envían.
 function newSubmissionId(){
   if(globalThis.crypto && typeof crypto.randomUUID==='function')return crypto.randomUUID();
