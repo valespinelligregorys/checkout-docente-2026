@@ -153,9 +153,32 @@ function makePDFBlob(){
   const stationAccents=['gold','clay','moss','gold'];
   const choices=questions.map((q,i)=>q.options.find(pair=>pair[0]===state.choices[i])?.[1]||'Sin elección registrada');
   const answers=questions.map((q,i)=>String(state.reflections[i]||'').trim()||'(Sin reflexión escrita)');
-  // The excerpt is taken verbatim from each person's reflection, never from another participant.
+  // Solo frases completas y literales: nunca cortar una idea con puntos suspensivos.
+  // Si ninguna unidad de sentido cabe en el destacado, se omite la cita.
   const excerpt=(s,max=67)=>{const clean=String(s||'').replace(/\s+/g,' ').trim();if(!clean)return '';
     if(clean.length<=max)return clean;let cut=clean.slice(0,max);const pos=cut.lastIndexOf(' ');if(pos>=max*.6)cut=cut.slice(0,pos);return cut+'...';};
+  const editorialQuote=(source,width=U-40,font=13.3)=>{
+    const clean=String(source||'').replace(/\s+/g,' ').trim();
+    if(!clean || clean==='(Sin reflexión escrita)')return '';
+    const candidates=[];
+    const add=(value,priority)=>{
+      const v=String(value||'').trim().replace(/^[«“\s]+|[»”\s]+$/g,'');
+      if(!v||v.endsWith('...')||v.endsWith('…'))return;
+      const words=v.match(/[\p{L}\p{N}]+/gu)||[];
+      if(words.length<3||words.length>23)return;
+      if(wrap('«'+v+'»',font,width,'F4').length>2)return;
+      if(!candidates.some(x=>x.text===v))candidates.push({text:v,priority});
+    };
+    // Una conclusión autónoma introducida por estos conectores conserva
+    // palabras originales, sin atribuir a la docente una reformulación ajena.
+    for(const match of clean.matchAll(/(?:entendiendo|comprendiendo|reconociendo)\s+que\s+([^,;.!?]+[.!?]?)/gi))add(match[1],0);
+    for(const sentence of clean.split(/(?<=[.!?])\s+/)){
+      add(sentence,1);
+      for(const clause of sentence.split(/;\s*|:\s*/))add(clause,2);
+    }
+    candidates.sort((a,b)=>a.priority-b.priority||a.text.length-b.text.length);
+    return candidates.length?candidates[0].text:'';
+  };
   // Portada: esta página tiene composición propia, como la vista previa V3.
   rectangle(0,0,W,H,'paper');rectangle(0,H-363,W,363,'forest');
   circle(476,H-107,90,'moss');circle(517,H-215,45,'gold');circle(391,H-268,25,'clay');
@@ -251,8 +274,9 @@ function makePDFBlob(){
       responseBlock(k,j);
       if(j%2===0 && py>100)line(L,py+5,W-R,py+5,'line');
     }
-    // Editorial pull-quote only if enough room; generated from the teacher's own response.
-    const phrase=excerpt(answers[k*2-2]||answers[k*2-1],77);
+    // Cita fiel y autosuficiente, tomada de cualquiera de las dos reflexiones.
+    // Omitirla si no hay fragmento apropiado o si la página no tiene aire.
+    const phrase=editorialQuote(answers[k*2-2])||editorialQuote(answers[k*2-1]);
     if(phrase && py>185){
       rectangle(L,94,U,75,'sage');rectangle(L,94,5,75,stationAccents[k-1]);
       txt('UNA HUELLA DE ESTA ESTACIÓN',L+18,145,8,'moss','F2');
@@ -278,9 +302,12 @@ function makePDFBlob(){
   txt('UNA INTENCIÓN PARA 2027',L+20,352,9,'clay','F2');
   const intent=wrap(choices[6],14.7,U-40,'F4').slice(0,2);
   intent.forEach((t,i)=>txt(t,L+20,326-i*18,14.7,'forest','F4'));
-  txt('UNA FRASE QUE DEJA HUELLA',L+20,279,9,'moss','F2');
-  const closing=excerpt(answers[2]||answers[7],75);
-  const closingLines=wrap('«'+closing+'»',13.5,U-40,'F4').slice(0,2);
+  // El cierre elige una idea completa del recorrido. Si ninguna es adecuada,
+  // ofrece una invitación editorial sin fingir que es una cita de la docente.
+  const closing=editorialQuote(answers[2],U-40,13.5)
+    ||[0,1,3,4,5,6,7].map(i=>editorialQuote(answers[i],U-40,13.5)).find(Boolean)||'';
+  txt(closing?'UNA FRASE QUE DEJA HUELLA':'PARA SEGUIR CULTIVANDO',L+20,279,9,'moss','F2');
+  const closingLines=wrap(closing?'«'+closing+'»':'Volver sobre lo vivido también nos permite imaginar lo que viene.',13.5,U-40,'F4');
   closingLines.forEach((t,i)=>txt(t,L+20,255-i*16,13.5,'forest','F4'));
   for(let k=1;k<=4;k++)motif(k,91+(k-1)*136,153,.48);
   line(L,82,W-R,82);txt('Estas reflexiones son personales; no se publican en el jardín colectivo.',L,63,8.8,'muted','F4');
