@@ -20,7 +20,8 @@ const state={screen:'home',index:0,choices:Array(8).fill(null),reflections:Array
 const escapeHTML=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const CONFIG=window.CHECKOUT_CONFIG||{};
 const API_URL=(CONFIG.appsScriptUrl||'').trim();
-const ONLINE=/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(API_URL);
+const ONLINE=true; // El jardín usa Firebase; Google Sheets deja de ser necesario.
+const TEST_MODE=new URLSearchParams(location.search).get('modo')==='prueba';
 const PRIORITIES={exploradora:'Explorar nuevas preguntas y formatos',tejedora:'Profundizar la colaboración y el cuidado mutuo',observadora:'Documentar los procesos de aprendizaje',arquitecta:'Afinar la planificación y la evaluación'};
 let autoRefresh=null;
 // v2: guardado local de cada decisión y texto, sin enviar datos personales.
@@ -95,64 +96,107 @@ function question(){state.screen='question';const i=state.index,q=questions[i];c
 function calculate(choices){const counts=Object.fromEntries(Object.keys(profiles).map(k=>[k,0]));choices.forEach(c=>{if(counts[c]!==undefined)counts[c]++});const priority=['exploradora','tejedora','arquitecta','observadora'];const sorted=priority.sort((a,b)=>counts[b]-counts[a]);return{key:sorted[0],counts,secondary:sorted[1]}}
 function payload(){const r=calculate(state.choices);return{type:'checkout_docente_2026',version:1,createdAt:new Date().toISOString(),name:state.name,room:state.room,profile:r.key,counts:r.counts,answers:questions.map((q,i)=>({station:q.station,question:q.title,choice:state.choices[i],reflection:state.reflections[i]}))}}
 function download(){const name=(state.name||'docente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9-]+/g,'-').toLowerCase().slice(0,40);const blob=new Blob([JSON.stringify(payload(),null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`checkout-2026-${name}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);toast('Bitácora descargada')}
-// Descarga de PDF legible (perfil, playlist y reflexiones). No envía datos a terceros.
-// La biblioteca de PDF se carga solo cuando la docente pulsa el botón.
-function loadPdfLibrary(){
-  if(window.jspdf?.jsPDF)return Promise.resolve(window.jspdf.jsPDF);
-  return new Promise((resolve,reject)=>{
-    const script=document.createElement('script');
-    script.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
-    script.async=true;
-    const timer=setTimeout(()=>{script.remove();reject(Error('Tiempo de espera agotado'))},16000);
-    script.onload=()=>{clearTimeout(timer);if(window.jspdf?.jsPDF)resolve(window.jspdf.jsPDF);else reject(Error('No se cargó el generador de PDF'))};
-    script.onerror=()=>{clearTimeout(timer);reject(Error('No se pudo cargar el generador de PDF'))};
-    document.head.append(script);
+// PDF autónomo: no necesita cargar bibliotecas externas ni enviar respuestas a terceros.
+function pdfLatin1(s){
+  const replacements={'\u2018':"'",'\u2019':"'",'\u201c':'"','\u201d':'"','\u2013':'-','\u2014':'-',
+    '\u2022':'-','\u2026':'...','\u00a0':' ','\u20ac':'EUR','\u2014':'-'};
+  return String(s??'').replace(/[\u2018-\u2022\u2026\u00a0\u20ac]/g,c=>replacements[c]||'')
+    .replace(/[\u{10000}-\u{10FFFF}]/gu,'').replace(/[^\u0020-\u00ff\n]/g,' ');
+}
+function makePDFBlob(){
+  const pages=[[]]; let y=782;
+  const cmd=s=>pages[pages.length-1].push(s);
+  const newPage=()=>{pages.push([]);y=782;};
+  const escaped=s=>pdfLatin1(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)');
+  const wrap=(s,max)=>{
+    const out=[];
+    for(const raw of pdfLatin1(s).split('\n')){
+      let line='';
+      for(const word of raw.split(/\s+/)){
+        if(!word)continue;
+        if((line+' '+word).trim().length>max && line){out.push(line);line='';}
+        if(word.length>max){if(line){out.push(line);line='';}for(let k=0;k<word.length;k+=max)out.push(word.slice(k,k+max));}
+        else line+=(line?' ':'')+word;
+      }
+      out.push(line||' ');
+    }
+    return out;
+  };
+  const add=(text,{size=10,bold=false,space=6}={})=>{
+    const max=Math.max(30,Math.floor(1060/size));
+    for(const line of wrap(text,max)){
+      const leading=size*1.46;
+      if(y-leading<54)newPage();
+      cmd('BT /'+(bold?'F2':'F1')+' '+size+' Tf 46 '+y.toFixed(2)+' Td ('+escaped(line)+') Tj ET');
+      y-=leading;
+    }
+    y-=space;
+  };
+  const profile=profiles[calculate(state.choices).key];
+  add('LO QUE HICIMOS CRECER',{size:19,bold:true,space:8});
+  add('Check-out docente 2026  |  Bitácora personal',{size:11,space:12});
+  if(state.name)add('Nombre: '+state.name,{bold:true});
+  if(state.room)add('Sala / rol: '+state.room);
+  add('Mi perfil: '+profile.name,{size:14,bold:true,space:5});
+  add(profile.short);add(profile.description,{space:12});
+  add('MI PLAYLIST',{size:12,bold:true,space:8});
+  for(const [song,artist] of profile.playlist)add(song+' - '+artist,{space:2});
+  y-=10;add('MI RECORRIDO Y MIS REFLEXIONES',{size:13,bold:true,space:10});
+  questions.forEach((q,i)=>{
+    if(y<170)newPage();
+    add((i+1)+'. '+q.station+'  |  '+q.title,{size:11,bold:true,space:5});
+    const selected=q.options.find(([key])=>key===state.choices[i]);
+    add('Mi elección: '+(selected?selected[1]:'Sin respuesta'),{space:6});
+    add(q.reflection,{bold:true,space:4});
+    add(state.reflections[i].trim()||'(Sin respuesta escrita)',{space:14});
   });
+  add('Documento personal. Las reflexiones no se publican en el jardín colectivo.',{size:9});
+  // Construir objetos PDF con offsets medidos en bytes WinAnsi.
+  const objects=[];const put=x=>{objects.push(x);return objects.length;};
+  const catalog=put('');const pagesRoot=put('');
+  const font1=put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const font2=put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  const refs=[];
+  for(const content of pages){
+    const stream=content.join('\n')+'\n';
+    const streamId=put('<< /Length '+stream.length+' >>\nstream\n'+stream+'endstream');
+    const pageId=put('<< /Type /Page /Parent '+pagesRoot+' 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 '+font1+' 0 R /F2 '+font2+' 0 R >> >> /Contents '+streamId+' 0 R >>');
+    refs.push(pageId+' 0 R');
+  }
+  objects[catalog-1]='<< /Type /Catalog /Pages '+pagesRoot+' 0 R >>';
+  objects[pagesRoot-1]='<< /Type /Pages /Count '+refs.length+' /Kids ['+refs.join(' ')+'] >>';
+  const chunks=['%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'];let total=chunks[0].length;
+  const offsets=[0];
+  for(let i=0;i<objects.length;i++){offsets.push(total);const x=(i+1)+' 0 obj\n'+objects[i]+'\nendobj\n';chunks.push(x);total+=x.length;}
+  const xref=total;
+  let x='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n';
+  for(const off of offsets.slice(1))x+=String(off).padStart(10,'0')+' 00000 n \n';
+  x+='trailer\n<< /Size '+(objects.length+1)+' /Root '+catalog+' 0 R >>\nstartxref\n'+xref+'\n%%EOF';
+  chunks.push(x);
+  const bytes=new Uint8Array(chunks.join('').split('').map(c=>c.charCodeAt(0)&255));
+  return new Blob([bytes],{type:'application/pdf'});
 }
 async function downloadPDF(){
-  const btn=$('#print');if(btn){btn.disabled=true;btn.textContent='Preparando tu PDF…';}
+  const button=$('#print');if(button)button.disabled=true;
   try{
-    const JsPDF=await loadPdfLibrary();
-    const doc=new JsPDF({unit:'mm',format:'a4'});
-    const margin=20, width=170, bottom=274, lineHeight=5.2;
-    let y=22;
-    const checkPage=(needed=8)=>{if(y+needed>bottom){doc.addPage();y=23;}};
-    const addText=(value,{size=10,bold=false,space=3}={})=>{
-      const txt=String(value??'').replace(/[\u{10000}-\u{10FFFF}]/gu,'').replace(/[\u2018\u2019]/g,"'").replace(/[\u201c\u201d]/g,'"').replace(/\u2014/g,'-');
-      doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(size);
-      const lines=doc.splitTextToSize(txt||' ',width);
-      const lh=size<=10?lineHeight:Math.max(lineHeight, size*.45);
-      for(const line of lines){checkPage(lh);doc.text(line,margin,y);y+=lh;}
-      y+=space;
-    };
-    const info=calculate(state.choices),profile=profiles[info.key];
-    addText('LO QUE HICIMOS CRECER', {size:17,bold:true,space:5});
-    addText('Check-out docente 2026 | Bitácora personal', {size:11,space:6});
-    if(state.name)addText('Nombre: '+state.name,{bold:true});
-    if(state.room)addText('Sala / rol: '+state.room);
-    addText('Perfil pedagógico: '+profile.name,{size:13,bold:true,space:3});
-    addText(profile.short);
-    addText(profile.description,{space:5});
-    addText('PLAYLIST DEL PERFIL',{size:12,bold:true});
-    for(const [song,artist] of profile.playlist)addText(song+' - '+artist,{space:1});
-    y+=6;
-    addText('MI RECORRIDO Y MIS REFLEXIONES',{size:12,bold:true,space:6});
-    questions.forEach((q,i)=>{
-      checkPage(25);
-      addText((i+1)+'. '+q.station+' | '+q.title,{bold:true,space:2});
-      const selected=q.options.find(([key])=>key===state.choices[i]);
-      addText('Elección: '+(selected?selected[1]:'Sin respuesta'),{space:2});
-      addText(q.reflection,{bold:true,space:1});
-      addText(state.reflections[i].trim()||'(Sin respuesta escrita)',{space:7});
-    });
-    addText('Documento personal. No incluye información del jardín colectivo.',{size:9});
+    const blob=makePDFBlob();
     const slug=(state.name||'docente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9-]+/g,'-').toLowerCase().slice(0,40);
-    doc.save('bitacora-checkout-2026-'+slug+'.pdf');
-    toast('PDF preparado. Revisá Descargas o Archivos.');
+    const filename='bitacora-checkout-2026-'+slug+'.pdf';
+    const file=new File([blob],filename,{type:'application/pdf'});
+    // iPhone: hoja Compartir permite guardar explícitamente en Archivos.
+    if(navigator.canShare?.({files:[file]})&&navigator.share){
+      await navigator.share({files:[file],title:'Mi bitácora docente 2026'});
+      toast('Elegí Guardar en Archivos desde Compartir.');
+    }else{
+      const url=URL.createObjectURL(blob);
+      const anchor=document.createElement('a');anchor.href=url;anchor.download=filename;
+      document.body.append(anchor);anchor.click();anchor.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      toast('PDF generado. Revisá Descargas.');
+    }
   }catch(error){
-    alert('El navegador no pudo descargar el PDF directamente. Se abrirá la opción Imprimir: elegí «Guardar como PDF» (o Compartir / Guardar en Archivos en iPhone). Tus respuestas no se pierden.');
-    window.print();
-  }finally{const button=$('#print');if(button){button.disabled=false;button.textContent='Descargar mi bitácora en PDF';}}
+    if(error?.name!=='AbortError')alert('No se pudo guardar el PDF: '+(error.message||'Error desconocido'));
+  }finally{if(button)button.disabled=false;}
 }
 // Conexión: las respuestas largas, los nombres y la sala NUNCA se envían.
 function newSubmissionId(){
@@ -185,29 +229,9 @@ function jsonp(params={}){
   });
 }
 async function postContribution(fields){
-  // Solicitud POST directa, en formato sencillo admitido por Google Apps Script.
-  // Apps Script está en otro dominio: la respuesta POST no es legible desde aquí.
-  // Por eso confirmamos SIEMPRE el registro mediante doGet(check=id).
-  if(!ONLINE)throw Error('El jardín todavía no está conectado con Google.');
-  const body=new URLSearchParams();
-  for(const [key,value] of Object.entries(fields))body.set(key,String(value));
-  let response;
-  try{
-    response=await fetch(API_URL,{
-      method:'POST',
-      mode:'no-cors',
-      credentials:'omit',
-      redirect:'follow',
-      headers:{'Content-Type':'application/x-www-form-urlencoded'},
-      body:body.toString(),
-      cache:'no-store',
-      keepalive:false
-    });
-  }catch(error){
-    throw Error('El navegador no logró enviar el aporte a Google. Abrí el enlace directamente en Safari o Chrome y volvé a intentarlo. ('+(error?.message||'sin detalles')+')');
-  }
-  // La respuesta normalmente será opaque; eso no demuestra éxito ni fracaso.
-  return response;
+  if(!window.checkoutGarden)throw Error('El jardín no está disponible. Actualizá la página.');
+  if(TEST_MODE)throw Error('Modo de prueba: tu aporte no se envía al jardín.');
+  return window.checkoutGarden.share(fields);
 }
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function confirmContribution(id){
@@ -218,14 +242,13 @@ async function confirmContribution(id){
   return false;
 }
 function shareUI(){
-  if(!ONLINE)return `<div class="panel share-panel no-print"><span class="eyebrow">Nuestro jardín colectivo</span><h3>El mapa todavía no está conectado</h3><p>Tu recorrido funciona y podés guardar tu bitácora. Para reunir las participaciones en línea, la dirección debe completar la conexión con Google Sheets antes de compartir el sitio con el equipo.</p></div>`;
+  if(TEST_MODE)return `<div class="panel share-panel no-print"><h3>Modo de prueba</h3><p>Este recorrido de ensayo no se envía al jardín colectivo.</p></div>`;
+  if(!ONLINE)return `<div class="panel share-panel no-print"><span class="eyebrow">Nuestro jardín colectivo</span><h3>El mapa todavía no está conectado</h3><p>Tu recorrido funciona y podés guardar tu bitácora. Para reunir las participaciones, necesitás ingresar con Google y tener habilitado el jardín en Firebase.</p></div>`;
   return `<div class="panel share-panel no-print" id="sharePanel">
     <span class="eyebrow">Tercer momento · Nuestro jardín colectivo</span>
     <h3>¿Querés sumar tu huella al mapa?</h3>
-    <p><strong>Tu participación todavía no se sumó al jardín.</strong> Compartir es opcional y requiere marcar la autorización, ingresar el código del equipo y pulsar «Sumar mi aporte al mapa». El mapa público muestra tu <strong>perfil pedagógico</strong> y tu <strong>intención elegida para 2027</strong>, pero nunca tu nombre, sala, ni tus reflexiones privadas.</p>
-    <label class="check-line"><input id="consentProfile" type="checkbox"><span><b>Sí, quiero sumar mi perfil y mi intención al mapa colectivo.</b><small>El mapa será visible para cualquier persona que tenga el enlace de la página.</small></span></label>
-    <label class="field-label" for="groupCode">Código del equipo</label>
-    <input type="password" id="groupCode" maxlength="80" autocomplete="off" placeholder="El código que compartió la dirección">
+    <p><strong>Tu participación todavía no se sumó al jardín.</strong> Compartir es opcional y requiere ingresar con Google, marcar la autorización y pulsar «Sumar mi aporte al mapa». El mapa compartido muestra tu <strong>perfil pedagógico</strong> y tu <strong>intención elegida para 2027</strong>, pero nunca tu nombre, sala, ni tus reflexiones privadas.</p>
+    <label class="check-line"><input id="consentProfile" type="checkbox"><span><b>Sí, quiero sumar mi perfil y mi intención al mapa colectivo.</b><small>El jardín se mostrará a quienes ingresen con Google. No se publica tu nombre ni tu sala.</small></span></label>
     <label class="field-label" for="shareQuote">Una frase para sembrar en 2027 (opcional)</label>
     <textarea id="shareQuote" maxlength="160" placeholder="Podés escribir algo nuevo, breve y anónimo. No incluyas nombres ni detalles identificatorios.">${escapeHTML(state.sharedPhrase)}</textarea>
     <label class="check-line"><input id="consentPhrase" type="checkbox" ${state.sharePhrase?'checked':''}><span><b>Autorizo también a publicar esta frase en el mapa.</b><small>Si no marcás esta opción, la frase no se envía.</small></span></label>
@@ -238,21 +261,17 @@ function bindShare(){
   $('#skipMap').onclick=mapView;
   $('#sendMap').onclick=async()=>{
     const consent=$('#consentProfile').checked;
-    const code=$('#groupCode').value.trim();
     state.sharedPhrase=$('#shareQuote').value.trim();
     state.sharePhrase=$('#consentPhrase').checked;persist();
     const phrase=state.sharePhrase?state.sharedPhrase:'';
     const status=$('#shareStatus'),button=$('#sendMap');
     if(!consent){status.textContent='Para sumar tu perfil, primero elegí voluntariamente compartirlo.';return;}
-    if(!code){status.textContent='Ingresá el código del equipo para enviar el aporte.';return;}
     if(state.sharePhrase&&!phrase){status.textContent='Escribí una frase o desmarcá la autorización para publicarla.';return;}
     if(!state.submissionId)state.submissionId=newSubmissionId();persist();
-    button.disabled=true;status.textContent='Paso 1 de 2: enviando tu aporte a Google…';status.style.fontWeight='700';status.style.color='#315b43';status.scrollIntoView({block:'nearest',behavior:'smooth'});
+    button.disabled=true;status.textContent='Enviando tu aporte al jardín privado del equipo…';status.style.fontWeight='700';status.style.color='#315b43';status.scrollIntoView({block:'nearest',behavior:'smooth'});
     try{
-      await postContribution({id:state.submissionId,code,profile:calculate(state.choices).key,priority:state.choices[6],phrase});
-      status.textContent='Paso 2 de 2: comprobando que Google lo guardó…';
-      const confirmed=await confirmContribution(state.submissionId);
-      if(!confirmed)throw Error('No se confirmó el registro en Google Sheets. Tu recorrido está guardado, pero el aporte NO figura todavía en el jardín. Revisá el código del equipo y la implementación de Apps Script.');
+      await postContribution({profile:calculate(state.choices).key,priority:state.choices[6],phrase});
+      status.textContent='Firebase confirmó el registro de tu huella en el jardín.';
       state.confirmed=true;persist();
       status.textContent='¡Tu aporte anónimo quedó registrado!';
       $('#sharePanel').innerHTML=`<span class="eyebrow">¡Una huella más!</span><h3>Tu aporte ya forma parte de nuestro jardín 🌱</h3><p>No se enviaron tu nombre, tu sala ni las respuestas abiertas. Gracias por compartir.</p><div class="buttons"><button class="btn" type="button" id="seeShared">Ver nuestro jardín colectivo →</button></div>`;
@@ -284,7 +303,7 @@ function mapView(){
   view(`<section class="session map-page"><span class="eyebrow">Nuestro jardín colectivo · 2026</span><h2>Distintas maneras de hacer crecer lo común.</h2>
     <p>Un mapa que se construye con las huellas anónimas de quienes eligen participar. No hay perfiles mejores: la diversidad es parte de la riqueza del equipo.</p>
     <div class="map-masthead"><div class="garden-illustration" aria-hidden="true">✿ <span>❀</span> ✳ <small>❃</small></div><div><span class="eyebrow">Mapa compartido</span><p class="map-intro">Cada participación suma una nueva mirada. Las cifras se actualizan cuando se envían respuestas y mientras el mapa está abierto.</p><b id="mapTotal" class="map-total">—</b><span class="muted"> aportes voluntarios</span></div></div>
-    <div id="mapStatus" class="micro" role="status">${ONLINE?'Conectando con el mapa…':'Aún falta conectar el mapa con Google Sheets.'}</div>
+    <div id="mapStatus" class="micro" role="status">${ONLINE?'Consultando el jardín en Firebase…':'Aún falta conectar el mapa con Google Sheets.'}</div>
     <div id="collective"></div>
     <div class="callout"><strong>Una mirada responsable:</strong> el mapa se comparte sin nombres ni salas. Las frases son públicas solo si cada docente autorizó publicarlas. Las reflexiones personales permanecen en su bitácora.</div>
     <div class="buttons no-print"><button class="btn" id="refreshMap" type="button">↻ Actualizar mapa</button><button class="btn secondary" id="back" type="button">Volver al inicio</button></div>
@@ -294,17 +313,19 @@ function mapView(){
   else $('#collective').innerHTML=`<div class="panel"><h3>Este mapa está listo para conectarse</h3><p>La dirección debe publicar el servicio de Google Apps Script y pegar su dirección en <code>config.js</code>. Hasta entonces no hay respuestas colectivas que mostrar.</p></div>`;
 }
 async function loadMap(silent=false){
-  if(!ONLINE)return;
-  const status=$('#mapStatus');
-  if(!status)return;
+  const status=$('#mapStatus');if(!status)return;
   if(!silent)status.textContent='Buscando los últimos aportes del equipo…';
   try{
-    const data=await jsonp();
+    if(!window.checkoutGarden)throw Error('La conexión al jardín todavía no se cargó.');
+    const data=await window.checkoutGarden.load();
     if(state.screen!=='map')return;
-    if(!data||!data.ok)throw Error('El servicio no devolvió un mapa válido.');
+    if(!data?.ok)throw Error('No pudimos leer los aportes.');
     state.mapData=data;renderMap(data);
-    status.textContent='Mapa en línea · última actualización: '+new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2-digit'}).format(new Date());
-  }catch(error){status.textContent='No fue posible actualizar el mapa: '+error.message;if(!state.mapData)$('#collective').innerHTML='<div class="panel"><h3>No se pudo cargar el mapa</h3><p>Revisá que Apps Script esté publicado y que hayas completado la dirección de conexión.</p></div>';}
+    status.textContent='Mapa actualizado · '+new Intl.DateTimeFormat('es-AR',{hour:'2-digit',minute:'2-digit'}).format(new Date());
+  }catch(error){
+    status.textContent='No fue posible actualizar el mapa: '+(error.message||'Error desconocido');
+    if(!state.mapData)$('#collective').innerHTML='<div class="panel"><h3>No se pudo cargar el mapa</h3><p>Verificá que hayas iniciado sesión con Google y que estén publicadas las reglas del jardín en Firestore.</p></div>';
+  }
 }
 function renderMap(data){
   const total=Math.max(0,Number(data.total)||0),counts=data.profiles||{},priorities=data.priorities||{};
