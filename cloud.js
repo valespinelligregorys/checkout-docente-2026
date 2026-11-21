@@ -5,6 +5,7 @@
 (() => {
   'use strict';
   const node = document.getElementById('cloudArea');
+  const VERSION = 'recovery-20261121';
   const bridge = window.checkoutBridge;
   const cfg = window.CHECKOUT_FIREBASE_CONFIG || {};
   if (!node) return;
@@ -45,6 +46,7 @@
       html += `<button class="btn ghost" id="cloudReload" type="button">Consultar Google de nuevo</button> <button class="btn ghost" id="cloudLogout" type="button">Cambiar de cuenta</button>`;
       node.innerHTML = html;
     }
+    node.setAttribute('data-recovery-version', VERSION);
     const on = (id, fn) => { const btn = document.getElementById(id); if (btn) btn.addEventListener('click', fn); };
     on('cloudLogin', logIn); on('cloudRecover', recover); on('cloudSave', () => save(true));
     on('cloudInitialize', initialize); on('cloudReload', load);
@@ -52,8 +54,14 @@
   }
   async function logIn() {
     status = 'Abriendo Google…'; display();
-    try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
-    catch (e) { status = `No se pudo ingresar: ${e.code || e.message}. Abrí la página directamente en Safari o Chrome.`; display(); }
+    try {
+      const credential = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      status = 'Sesión iniciada con ' + (credential.user?.email || 'Google') + '. Consultando tus respuestas…';
+      display();
+    } catch (e) {
+      status = 'No se pudo iniciar sesión (' + (e.code || e.message) + '). Abrí este sitio directamente en Safari o Chrome, no desde una vista previa de otra app.';
+      display();
+    }
   }
   async function load() {
     if (!user) return;
@@ -68,7 +76,25 @@
       cloudDraft = valid(candidate) ? candidate : null;
       mode = 'ready';
       if (cloudDraft) {
-        status = 'Tu recorrido está disponible. Elegí «Recuperar y continuar mi recorrido» para abrirlo. No se ha sobrescrito ninguna respuesta.';
+        const localDraft = bridge.exportDraft();
+        if (!present(localDraft)) {
+          // El segundo dispositivo está vacío: mostrar inmediatamente el borrador remoto.
+          // No se escribe en Firestore al recuperarlo.
+          if (bridge.importDraft(cloudDraft)) {
+            syncEnabled = true;
+            status = 'Recuperamos ' + count(cloudDraft) + ' de 8 elecciones de Google. Ya podés seguir desde donde quedaste.';
+            display();
+            showNextQuestion();
+            return;
+          }
+          status = 'Google encontró respuestas, pero la página no pudo mostrarlas. No se modificó ningún dato.';
+        } else if (JSON.stringify(localDraft.choices) === JSON.stringify(cloudDraft.choices) &&
+                   JSON.stringify(localDraft.reflections) === JSON.stringify(cloudDraft.reflections)) {
+          syncEnabled = true;
+          status = 'Tus respuestas de este dispositivo coinciden con las de Google. Podés continuar.';
+        } else {
+          status = 'Google encontró ' + count(cloudDraft) + ' respuestas. Este dispositivo tiene un recorrido distinto: elegí «Recuperar y continuar» para usar el de Google.';
+        }
       } else if (snapshot.exists) {
         status = 'Hay un documento en Google, pero no tiene el formato de este Check-out. No se modificó.';
         mode = 'invalid';
