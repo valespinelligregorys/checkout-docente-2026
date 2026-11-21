@@ -104,165 +104,211 @@ function pdfLatin1(s){
     .replace(/[\u{10000}-\u{10FFFF}]/gu,'').replace(/[^\u0020-\u00ff\n]/g,' ');
 }
 function makePDFBlob(){
-  // Bitácora de diseño editorial, íntegramente generada en el dispositivo.
-  // No envía ninguna respuesta a servidores externos.
-  const W=595,H=842,L=48,R=48,usable=W-L-R;
-  const colors={forest:[0.16,0.27,0.21],green:[0.28,0.43,0.32],cream:[0.973,0.966,0.935],white:[1,1,1],ink:[0.17,0.23,0.19],muted:[0.40,0.46,0.41],sage:[0.90,0.94,0.88],line:[0.83,0.86,0.80],clay:[0.79,0.42,0.31],gold:[0.91,0.72,0.38]};
-  const rgb=k=>(colors[k]||colors.ink).map(n=>Number(n).toFixed(3)).join(' ');
-  const quote=s=>'('+pdfLatin1(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')+')';
-  const pages=[];let cmds=[],y=0;
-  const draw=s=>cmds.push(s);
-  const fill=(x,yy,w,h,color)=>draw(rgb(color)+' rg '+x+' '+yy+' '+w+' '+h+' re f');
-  const stroke=(x,yy,w,h,color)=>draw(rgb(color)+' RG 0.7 w '+x+' '+yy+' '+w+' '+h+' re S');
-  const circle=(x,cy,r,color)=>{const k=r*0.55228475;draw(rgb(color)+' rg '+(x+r)+' '+cy+' m '+(x+r)+' '+(cy+k)+' '+(x+k)+' '+(cy+r)+' '+x+' '+(cy+r)+' c '+(x-k)+' '+(cy+r)+' '+(x-r)+' '+(cy+k)+' '+(x-r)+' '+cy+' c '+(x-r)+' '+(cy-k)+' '+(x-k)+' '+(cy-r)+' '+x+' '+(cy-r)+' c '+(x+k)+' '+(cy-r)+' '+(x+r)+' '+(cy-k)+' '+(x+r)+' '+cy+' c f');};
-  const text=(s,x,yy,size=10,color='ink',bold=false)=>draw(rgb(color)+' rg BT /'+(bold?'F2':'F1')+' '+size+' Tf 1 0 0 1 '+x+' '+yy+' Tm '+quote(s)+' Tj ET');
-  const approx=(s,size)=>pdfLatin1(s).length*size*0.51;
-  const wrap=(s,size,width)=>{
-    const lines=[];
-    for(const paragraph of pdfLatin1(s).replace(/\r/g,'').split('\n')){
-      if(!paragraph.trim()){lines.push('');continue;}
-      let line='';
-      for(let word of paragraph.split(/\s+/)){
+  // Bitácora editorial V3, creada enteramente en el navegador.
+  // Mantiene las respuestas locales: este generador no las envía a ningún servidor.
+  const W=595,H=842,L=48,R=48,U=W-L-R;
+  const C={forest:[.141,.278,.212],moss:[.325,.451,.365],ink:[.137,.231,.188],paper:[.98,.969,.941],sage:[.898,.922,.867],clay:[.784,.459,.353],gold:[.851,.706,.420],muted:[.431,.475,.431],line:[.847,.875,.827],white:[1,1,1]};
+  const rgb=k=>(C[k]||C.ink).map(n=>n.toFixed(3)).join(' ');
+  const esc=s=>'('+pdfLatin1(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')+')';
+  const pages=[];let commands=[];
+  const put=s=>commands.push(s);
+  const rectangle=(x,y,w,h,col)=>put(rgb(col)+' rg '+x.toFixed(2)+' '+y.toFixed(2)+' '+w.toFixed(2)+' '+h.toFixed(2)+' re f');
+  const circle=(x,y,r,col)=>{const k=.55228475*r;put(rgb(col)+' rg '+(x+r)+' '+y+' m '+(x+r)+' '+(y+k)+' '+(x+k)+' '+(y+r)+' '+x+' '+(y+r)+' c '+(x-k)+' '+(y+r)+' '+(x-r)+' '+(y+k)+' '+(x-r)+' '+y+' c '+(x-r)+' '+(y-k)+' '+(x-k)+' '+(y-r)+' '+x+' '+(y-r)+' c '+(x+k)+' '+(y-r)+' '+(x+r)+' '+(y-k)+' '+(x+r)+' '+y+' c f');};
+  const line=(x1,y1,x2,y2,col='line',width=.8)=>put(rgb(col)+' RG '+width+' w '+x1+' '+y1+' m '+x2+' '+y2+' l S');
+  const bezier=(x1,y1,x2,y2,x3,y3,x4,y4,col='moss',weight=1.8)=>put(rgb(col)+' RG '+weight+' w '+x1+' '+y1+' m '+x2+' '+y2+' '+x3+' '+y3+' '+x4+' '+y4+' c S');
+  const txt=(s,x,y,size=10,color='ink',font='F1')=>put(rgb(color)+' rg BT /'+font+' '+size+' Tf 1 0 0 1 '+x.toFixed(2)+' '+y.toFixed(2)+' Tm '+esc(s)+' Tj ET');
+  const wrap=(s,size,maxWidth,font='F1')=>{
+    // Conservative metrics prevent long words and paragraphs from running past the margin.
+    const factor=font==='F3'?.54:(font==='F2'?.54:.52);
+    const out=[];for(const para of pdfLatin1(s).replace(/\r/g,'').split('\n')){
+      if(!para.trim()){out.push('');continue;}
+      let str='';for(let word of para.split(/\s+/)){
         if(!word)continue;
-        if(line && approx(line+' '+word,size)>width){lines.push(line);line='';}
-        while(approx(word,size)>width){
-          let n=Math.max(1,Math.floor(width/(size*0.51)));
-          if(line){lines.push(line);line='';}
-          lines.push(word.slice(0,n));word=word.slice(n);
-        }
-        line+=(line?' ':'')+word;
-      }
-      lines.push(line);
-    }
-    return lines;
+        if(str && (str+' '+word).length*size*factor>maxWidth){out.push(str);str='';}
+        while(word.length*size*factor>maxWidth){const n=Math.max(1,Math.floor(maxWidth/(size*factor)));if(str){out.push(str);str='';}out.push(word.slice(0,n));word=word.slice(n);}
+        str+=(str?' ':'')+word;
+      }out.push(str);
+    }return out;
   };
-  const top=()=>{fill(0,0,W,H,'cream');fill(0,H-10,W,10,'forest');text('LO QUE HICIMOS CRECER',L,796,10,'forest',true);text('BITÁCORA DOCENTE · 2026',355,796,9,'muted');fill(L,782,usable,1,'line');y=757;};
-  const newPage=()=>{if(cmds.length)pages.push(cmds);cmds=[];top();};
-  const need=h=>{if(y-h<82)newPage();};
-  const paragraph=(s,{size=10.5,color='ink',bold=false,leading=15,after=8,indent=0}={})=>{
-    for(const line of wrap(s,size,usable-indent)){
-      need(leading);
-      if(line)text(line,L+indent,y,size,color,bold);
-      y-=leading;
-    }
-    y-=after;
+  const multi=(s,x,y,maxWidth,size=11,leading=17,col='ink',font='F1')=>{
+    const ls=wrap(s,size,maxWidth,font);for(const t of ls){if(t)txt(t,x,y,size,col,font);y-=leading;}return y;
+  };
+  const motif=(n,x,y,scale=1)=>{
+    // Four distinct vector signatures: sprout, detour, network, seeds.
+    circle(x,y,54*scale,'sage');
+    if(n===1){bezier(x-8*scale,y-30*scale,x+8*scale,y-6*scale,x-10*scale,y+14*scale,x+3*scale,y+36*scale,'moss',2);circle(x-13*scale,y+12*scale,12*scale,'moss');circle(x+12*scale,y+27*scale,10*scale,'moss');circle(x+3*scale,y+43*scale,4*scale,'gold');}
+    else if(n===2){bezier(x-34*scale,y-24*scale,x-8*scale,y-45*scale,x+16*scale,y+11*scale,x-6*scale,y+9*scale,'clay',2.8);bezier(x-6*scale,y+9*scale,x-25*scale,y+23*scale,x+15*scale,y+43*scale,x+32*scale,y+26*scale,'clay',2.8);circle(x-34*scale,y-24*scale,5*scale,'forest');circle(x-6*scale,y+9*scale,5*scale,'forest');circle(x+32*scale,y+26*scale,5*scale,'forest');}
+    else if(n===3){const p=[[-31,5],[-8,30],[25,14],[11,-25],[-24,-25]].map(a=>[x+a[0]*scale,y+a[1]*scale]);for(const [a,b] of [[0,1],[1,2],[2,3],[3,4],[4,0],[1,3],[0,2]])line(...p[a],...p[b],'moss',1.7);p.forEach((q,i)=>circle(q[0],q[1],6*scale,i%2?'clay':'forest'));}
+    else {for(const [dx,dy,r,k] of [[-22,-7,7,'clay'],[-2,22,6,'gold'],[22,-15,8,'forest']])circle(x+dx*scale,y+dy*scale,r*scale,k);bezier(x+1*scale,y-35*scale,x-8*scale,y-8*scale,x+9*scale,y+12*scale,x+6*scale,y+41*scale,'moss',1.8);}
+  };
+  const bottom=()=>{if(commands.length){pages.push(commands);commands=[];}};
+  const header=(label='BITÁCORA DOCENTE  ·  2026')=>{
+    rectangle(0,0,W,H,'paper');rectangle(0,H-10,W,10,'forest');
+    txt('LO QUE HICIMOS CRECER',L,H-52,9,'forest','F2');txt(label,W-235,H-52,8.5,'muted');line(L,H-63,W-R,H-63);
   };
   const profile=profiles[calculate(state.choices).key];
   const secondary=profiles[calculate(state.choices).secondary];
-  const stationColors=['green','clay','forest','green'];
-  // Portada integrada: identidad de la experiencia, perfil y playlist.
-  fill(0,0,W,H,'cream');fill(0,497,W,345,'forest');
-  circle(518,738,87,'green');circle(554,648,45,'gold');circle(493,566,21,'clay');
-  text('CHECK-OUT DOCENTE  /  2026',L,784,11,'sage',true);
-  text('Lo que',L,699,42,'white',true);
-  text('hicimos crecer',L,646,38,'white',true);
-  fill(L,613,72,4,'gold');
-  text('Una bitácora para mirar lo vivido',L,578,15,'white');
-  text('y sembrar lo que viene.',L,555,15,'white');
-  text('MI PERFIL PEDAGÓGICO',L,460,11,'green',true);
-  text(profile.name,L,425,24,'forest',true);
-  y=400;
-  paragraph(profile.short,{size:11,bold:true,leading:16,after:5});
-  paragraph(profile.description,{size:10.5,leading:16,after:10});
-  paragraph('También reconozco una sensibilidad '+secondary.name.toLowerCase().replace('la ','')+'.',{size:10,color:'muted',leading:15,after:15});
-  if(state.name)paragraph('Mi bitácora: '+state.name,{size:10,bold:true,after:5});
-  if(state.room)paragraph('Sala / rol: '+state.room,{size:10,color:'muted',after:5});
-  if(y<200)newPage();
-  fill(L,111,usable,1,'line');
-  text('UN CIERRE PARA RECONOCER LO APRENDIDO',L,85,9,'green',true);
-  text('Personal · Reflexivo · Sin respuestas correctas',L,67,9,'muted');
-  // La portada se completa sin cortar texto: las páginas de contenido siguen.
-  newPage();
-  text('Mi banda sonora',L,y,22,'forest',true);y-=22;
-  paragraph('Tres canciones para acompañar este perfil y seguir creciendo.',{size:10,color:'muted',leading:15,after:9});
-  for(let i=0;i<profile.playlist.length;i++){
-    need(50);
-    fill(L,y-32,usable,42,i%2===0?'white':'sage');
-    circle(L+22,y-11,12,i%2===0?'sage':'white');
-    text(String(i+1),L+19,y-15,10,'green',true);
-    text(profile.playlist[i][0],L+45,y-9,11,'forest',true);
-    text(profile.playlist[i][1],L+45,y-24,9,'muted');
-    y-=51;
-  }
-  y-=21;
-  text('Mis estaciones',L,y,22,'forest',true);y-=23;
-  paragraph('Ocho elecciones, ocho reflexiones. Un recorrido situado por el año que compartimos.',{size:10,color:'muted',leading:16,after:16});
-  const stations=['Lo que floreció','Lo que nos desafió','Lo que construimos juntas','Lo que sembramos'];
-  let previous='';
-  questions.forEach((q,i)=>{
-    const current=q.station;
-    if(current!==previous){
-      need(82);if(i>0)y-=9;
-      const stationNo=Math.min(4,Math.floor(i/2)+1);
-      fill(L,y-25,usable,43,'forest');
-      circle(L+23,y-4,13,stationColors[stationNo-1]);
-      text(String(stationNo),L+19.5,y-8,11,'white',true);
-      text(current.toUpperCase(),L+47,y-9,12,'white',true);
-      y-=62;previous=current;
+  const stationNames=['Lo que floreció','Lo que nos desafió','Lo que construimos juntas','Lo que sembramos'];
+  const stationSubs=['Volver a las escenas que nos transformaron.','Escuchar lo incierto también es aprender.','Un año también se escribe en plural.','Lo que hoy dejamos abierto puede crecer mañana.'];
+  const stationAccents=['gold','clay','moss','gold'];
+  const choices=questions.map((q,i)=>q.options.find(pair=>pair[0]===state.choices[i])?.[1]||'Sin elección registrada');
+  const answers=questions.map((q,i)=>String(state.reflections[i]||'').trim()||'(Sin reflexión escrita)');
+  // The excerpt is taken verbatim from each person's reflection, never from another participant.
+  const excerpt=(s,max=67)=>{const clean=String(s||'').replace(/\s+/g,' ').trim();if(!clean)return '';
+    if(clean.length<=max)return clean;let cut=clean.slice(0,max);const pos=cut.lastIndexOf(' ');if(pos>=max*.6)cut=cut.slice(0,pos);return cut+'...';};
+  // Portada: esta página tiene composición propia, como la vista previa V3.
+  rectangle(0,0,W,H,'paper');rectangle(0,H-363,W,363,'forest');
+  circle(476,H-107,90,'moss');circle(517,H-215,45,'gold');circle(391,H-268,25,'clay');
+  bezier(483,H-326,466,H-275,486,H-265,484,H-238,'sage',2);
+  txt('CHECK-OUT DOCENTE   /   2026',L,H-61,10,'sage','F2');
+  txt('Lo que',L,H-144,42,'white','F3');txt('hicimos crecer',L,H-198,36,'white','F3');
+  rectangle(L,H-225,92,4,'gold');txt('Una bitácora para volver sobre lo vivido',L,H-270,12,'white');txt('y reconocer aquello que todavía puede crecer.',L,H-289,12,'white');
+  let yy=H-406;txt('BITÁCORA PERSONAL DE CIERRE',L,yy,9,'moss','F2');
+  yy-=37;yy=multi(state.name||'Mi bitácora personal',L,yy,U,24,29,'forest','F3')-5;
+  if(state.room)yy=multi(state.room,L,yy,U,11,15,'muted')-5;
+  line(L,yy-10,W-R,yy-10);yy-=41;
+  txt('MI PERFIL PEDAGÓGICO',L,yy,9,'moss','F2');yy-=32;
+  txt(profile.name,L,yy,22,'forest','F3');yy-=29;
+  yy=multi(profile.short,L,yy,U,10.5,15,'forest','F2')-3;
+  yy=multi(profile.description,L,yy,U,9.5,14,'ink')-7;
+  const sensibil='También reconozco una sensibilidad '+secondary.name.toLowerCase().replace('la ','')+'.';
+  yy=multi(sensibil,L,yy,U,9.3,14,'muted','F4');
+  // Playlist placed in the lower part of the cover, without losing the profile section.
+  const playlistTop=174;
+  const coverPlaylist=yy>=playlistTop+1;
+  if(coverPlaylist){
+    line(L,playlistTop,W-R,playlistTop);txt('MI BANDA SONORA',L,155,9,'moss','F2');
+    for(let i=0;i<profile.playlist.length;i++){
+      const x=L+i*174;rectangle(x,76,164,63,i%2?'sage':'white');txt(('0'+(i+1)).slice(-2),x+12,119,8,'clay','F2');
+      const song=profile.playlist[i];const title=wrap(song[0],9.3,146,'F2');
+      txt(title[0]||'',x+12,103,9.3,'forest','F2');txt(excerpt(song[1],25),x+12,87,8,'muted');
     }
-    const titleLines=wrap(q.title,13,usable-58);
-    need(155+titleLines.length*18);
-    text(String(i+1).padStart(2,'0'),L,y,19,'clay',true);
-    let titleY=y+1;
-    for(const l of titleLines){text(l,L+45,titleY,13,'forest',true);titleY-=19;}
-    y=titleY-9;
-    const selected=q.options.find(([key])=>key===state.choices[i]);
-    const selectedText=selected?selected[1]:'Sin elección registrada';
-    const optionLines=wrap(selectedText,10,usable-42);
-    const optH=18+optionLines.length*15;
-    need(optH+24);
-    fill(L,y-optH+13,usable,optH,'sage');fill(L,y-optH+13,3,optH,'green');
-    text('MI ELECCIÓN',L+13,y,8,'green',true);let oy=y-16;
-    for(const line of optionLines){text(line,L+13,oy,10,'ink');oy-=15;}
-    y-=optH+14;
-    paragraph(q.reflection,{size:10,color:'green',bold:true,leading:15,after:7});
-    const response=(state.reflections[i]||'').trim()||'(Sin reflexión escrita)';
-    const responseLines=wrap(response,10.4,usable-32);
-    let idx=0;
-    while(idx<responseLines.length){
-      // Si es una reflexión extensa, continúa en la página siguiente.
-      if(y<101){newPage();text('REFLEXIÓN · CONTINUACIÓN',L,y,9,'green',true);y-=27;}
-      const space=Math.max(1,Math.floor((y-90)/16));
-      const slice=responseLines.slice(idx,idx+space);
-      const blockH=slice.length*16+20;
-      fill(L,y-blockH+10,usable,blockH,'white');
-      for(const line of slice){if(line)text(line,L+16,y-12,10.4,'ink');y-=16;}
-      y-=20;idx+=slice.length;
-    }
-    y-=24;
-  });
-  need(80);
-  fill(L,y-52,usable,54,'sage');
-  text('Una huella para seguir creciendo',L+14,y-17,12,'forest',true);
-  text('Esta bitácora es personal. Sus reflexiones no se publican en el jardín.',L+14,y-36,9,'muted');
-  // Folios, filetes y pie de página en todas las hojas.
-  if(cmds.length)pages.push(cmds);
-  pages.forEach((page,index)=>{
-    page.push(rgb('line')+' RG 0.6 w '+L+' 53 m '+(W-R)+' 53 l S');
-    page.push(rgb('muted')+' rg BT /F1 8 Tf 1 0 0 1 '+L+' 37 Tm '+quote('LO QUE HICIMOS CRECER  ·  BITÁCORA PERSONAL')+' Tj ET');
-    page.push(rgb('green')+' rg BT /F2 9 Tf 1 0 0 1 '+(W-R-33)+' 37 Tm '+quote((index+1)+' / '+pages.length)+' Tj ET');
-  });
-  // PDF 1.4, WinAnsi. Generación local sin redes ni dependencias externas.
-  const objects=[];const put=o=>{objects.push(o);return objects.length;};
-  const catalog=put(''),pagesRoot=put('');
-  const f1=put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-  const f2=put('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
-  const refs=[];
-  for(const content of pages){
-    const stream=content.join('\n')+'\n';
-    const sid=put('<< /Length '+stream.length+' >>\nstream\n'+stream+'endstream');
-    const pid=put('<< /Type /Page /Parent '+pagesRoot+' 0 R /MediaBox [0 0 '+W+' '+H+'] /Resources << /Font << /F1 '+f1+' 0 R /F2 '+f2+' 0 R >> >> /Contents '+sid+' 0 R >>');
-    refs.push(pid+' 0 R');
   }
-  objects[catalog-1]='<< /Type /Catalog /Pages '+pagesRoot+' 0 R >>';
-  objects[pagesRoot-1]='<< /Type /Pages /Count '+refs.length+' /Kids ['+refs.join(' ')+'] >>';
-  const parts=['%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'];let byteCount=parts[0].length;const offsets=[0];
-  for(let i=0;i<objects.length;i++){offsets.push(byteCount);const p=(i+1)+' 0 obj\n'+objects[i]+'\nendobj\n';parts.push(p);byteCount+=p.length;}
-  let cross='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n';
-  for(const off of offsets.slice(1))cross+=String(off).padStart(10,'0')+' 00000 n \n';
-  cross+='trailer\n<< /Size '+(objects.length+1)+' /Root '+catalog+' 0 R >>\nstartxref\n'+byteCount+'\n%%EOF';
-  parts.push(cross);
-  return new Blob([Uint8Array.from(parts.join(''),c=>c.charCodeAt(0)&255)],{type:'application/pdf'});
+  bottom();
+  if(!coverPlaylist){
+    // Optional playlist page protects long names and roles from overlapping the cover.
+    header();motif(1,W-117,H-175,1);
+    txt('MI BANDA SONORA',L,H-124,10,'moss','F2');
+    txt('Tres canciones para seguir creciendo',L,H-167,23,'forest','F3');
+    profile.playlist.forEach((song,i)=>{const cy=H-240-i*100;rectangle(L,cy-58,U,74,i%2?'sage':'white');
+      txt(('0'+(i+1)).slice(-2),L+14,cy-6,11,'clay','F2');
+      txt(song[0],L+55,cy-4,13,'forest','F2');txt(song[1],L+55,cy-26,10,'muted');});
+    bottom();
+  }
+  // Each station occupies at least a full page. Longer responses get true continuation pages.
+  const stationPage=(k,continuation=false)=>{
+    header(continuation?'ESTACIÓN '+k+'  ·  CONTINUACIÓN':'BITÁCORA DOCENTE  ·  2026');
+    rectangle(0,136,9,H-325,stationAccents[k-1]);
+    if(!continuation){
+      motif(k,W-123,H-145,1);
+      circle(L+19,H-105,18,'sage');txt('0'+k,L+8,H-110,10,'forest','F2');
+      txt('ESTACIÓN '+('0'+k).slice(-2),L+45,H-102,9,'clay','F2');
+      txt(stationNames[k-1],L+45,H-137,25,'forest','F3');
+      txt(stationSubs[k-1],L+46,H-162,10,'muted','F4');
+      line(L,H-184,W-R,H-184);
+      return H-219;
+    }
+    txt(stationNames[k-1]+'  /  continuación',L,H-111,18,'forest','F3');line(L,H-128,W-R,H-128);
+    return H-165;
+  };
+  // Text cards split at safe line boundaries; header/question/choice stay together.
+  let activeK=1,py=0;
+  const stationNewPage=(k,cont)=>{bottom();activeK=k;py=stationPage(k,cont);};
+  const ensure=(min,k)=>{if(py-min<87)stationNewPage(k,true);};
+  const responseBlock=(k,qIndex)=>{
+    const q=questions[qIndex],n=qIndex+1;
+    const title=wrap(q.title,13.2,U-43,'F2');
+    const opt=wrap(choices[qIndex],10.4,U-35);
+    const questionPrompt=wrap(q.reflection,10.5,U,'F2');
+    const overhead=title.length*18+19+(27+opt.length*15)+16+questionPrompt.length*16+12;
+    ensure(overhead+62,k);
+    txt(('0'+n).slice(-2),L,py,14,'clay','F2');
+    let cursor=py;for(const t of title){txt(t,L+38,cursor,13.2,'forest','F2');cursor-=18;}
+    py=cursor-16;
+    const badgeH=27+opt.length*15;
+    rectangle(L,py-badgeH+13,U,badgeH,'sage');rectangle(L,py-badgeH+13,4,badgeH,'moss');
+    txt('MI ELECCIÓN',L+16,py,8,'forest','F2');
+    opt.forEach((t,j)=>txt(t,L+16,py-17-j*15,10.4,'ink'));
+    py-=badgeH+16;
+    for(const t of questionPrompt){txt(t,L,py,10.5,'moss','F2');py-=16;}py-=10;
+    const ls=wrap(answers[qIndex],11,U-42,'F3');
+    let cursorIndex=0;
+    while(cursorIndex<ls.length){
+      if(py<130)stationNewPage(k,true);
+      const canFit=Math.floor((py-105-25)/17);
+      if(canFit<1){stationNewPage(k,true);continue;}
+      const slice=ls.slice(cursorIndex,cursorIndex+canFit);
+      const bh=slice.length*17+25;
+      rectangle(L,py-bh+9,U,bh,'white');rectangle(L,py-bh+9,4,bh,'gold');
+      slice.forEach((t,j)=>{if(t)txt(t,L+18,py-16-j*17,11,'ink','F3');});
+      py-=bh+16;cursorIndex+=slice.length;
+    }
+    py-=15;
+  };
+  for(let k=1;k<=4;k++){
+    stationNewPage(k,false);
+    for(let j=(k-1)*2;j<k*2;j++){
+      responseBlock(k,j);
+      if(j%2===0 && py>100)line(L,py+5,W-R,py+5,'line');
+    }
+    // Editorial pull-quote only if enough room; generated from the teacher's own response.
+    const phrase=excerpt(answers[k*2-2]||answers[k*2-1],77);
+    if(phrase && py>185){
+      rectangle(L,94,U,75,'sage');rectangle(L,94,5,75,stationAccents[k-1]);
+      txt('UNA HUELLA DE ESTA ESTACIÓN',L+18,145,8,'moss','F2');
+      const quoteLines=wrap('«'+phrase+'»',13.3,U-40,'F4');
+      let qy=122;for(const q of quoteLines.slice(0,2)){txt(q,L+18,qy,13.3,'forest','F4');qy-=18;}
+    }
+  }
+  bottom();
+  // Autonomous final page: a composed ending, not leftover space below Question 8.
+  rectangle(0,0,W,H,'paper');rectangle(0,H-12,W,12,'forest');
+  circle(W-75,H-111,89,'sage');circle(W-150,H-115,21,'gold');circle(W-50,H-231,22,'clay');
+  bezier(W-97,H-241,W-115,H-178,W-74,H-176,W-91,H-135,'moss',2.1);
+  txt('CHECK-OUT DOCENTE  /  2026',L,H-58,9.5,'moss','F2');
+  txt('Una huella',L,H-152,35,'forest','F3');
+  txt('para seguir creciendo',L,H-197,29,'forest','F3');
+  rectangle(L,H-220,91,3,'gold');
+  multi('Cerrar un ciclo no es dejarlo atrás: es reconocer qué permanece y qué deseamos seguir cultivando.',L,H-254,380,12,19,'ink');
+  rectangle(L,216,U,282,'white');
+  txt('DE ESTA BITÁCORA ME LLEVO',L+20,464,9,'moss','F2');
+  txt(profile.name,L+20,424,24,'forest','F3');
+  multi(profile.short,L+20,399,U-40,10.3,15,'muted');
+  line(L+20,379,W-R-20,379);
+  txt('UNA INTENCIÓN PARA 2027',L+20,352,9,'clay','F2');
+  const intent=wrap(choices[6],14.7,U-40,'F4').slice(0,2);
+  intent.forEach((t,i)=>txt(t,L+20,326-i*18,14.7,'forest','F4'));
+  txt('UNA FRASE QUE DEJA HUELLA',L+20,279,9,'moss','F2');
+  const closing=excerpt(answers[2]||answers[7],75);
+  const closingLines=wrap('«'+closing+'»',13.5,U-40,'F4').slice(0,2);
+  closingLines.forEach((t,i)=>txt(t,L+20,255-i*16,13.5,'forest','F4'));
+  for(let k=1;k<=4;k++)motif(k,91+(k-1)*136,153,.48);
+  line(L,82,W-R,82);txt('Estas reflexiones son personales; no se publican en el jardín colectivo.',L,63,8.8,'muted','F4');
+  bottom();
+  // Foliation and fully self-contained PDF (base-14 PDF fonts; no external JS libraries).
+  pages.forEach((page,i)=>{
+    page.push(rgb('line')+' RG .7 w '+L+' 46 m '+(W-R)+' 46 l S');
+    page.push(rgb('muted')+' rg BT /F1 7.7 Tf 1 0 0 1 '+L+' 28 Tm '+esc('LO QUE HICIMOS CRECER  /  BITÁCORA PERSONAL')+' Tj ET');
+    page.push(rgb('forest')+' rg BT /F2 9 Tf 1 0 0 1 '+(W-R-36)+' 28 Tm '+esc(String(i+1).padStart(2,'0')+' / '+String(pages.length).padStart(2,'0'))+' Tj ET');
+  });
+  const objs=[];const obj=s=>{objs.push(s);return objs.length;};
+  const catalog=obj(''),root=obj('');
+  const f1=obj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const f2=obj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  const f3=obj('<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding >>');
+  const f4=obj('<< /Type /Font /Subtype /Type1 /BaseFont /Times-Italic /Encoding /WinAnsiEncoding >>');
+  const kids=[];
+  for(const p of pages){const stream=p.join('\n')+'\n';const sid=obj('<< /Length '+stream.length+' >>\nstream\n'+stream+'endstream');
+    const id=obj('<< /Type /Page /Parent '+root+' 0 R /MediaBox [0 0 '+W+' '+H+'] /Resources << /Font << /F1 '+f1+' 0 R /F2 '+f2+' 0 R /F3 '+f3+' 0 R /F4 '+f4+' 0 R >> >> /Contents '+sid+' 0 R >>');kids.push(id+' 0 R');}
+  objs[catalog-1]='<< /Type /Catalog /Pages '+root+' 0 R >>';
+  objs[root-1]='<< /Type /Pages /Count '+kids.length+' /Kids ['+kids.join(' ')+'] >>';
+  const chunks=['%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'];let size=chunks[0].length;const offset=[0];
+  for(let i=0;i<objs.length;i++){offset.push(size);const part=(i+1)+' 0 obj\n'+objs[i]+'\nendobj\n';chunks.push(part);size+=part.length;}
+  let xref='xref\n0 '+(objs.length+1)+'\n0000000000 65535 f \n';
+  for(const n of offset.slice(1))xref+=String(n).padStart(10,'0')+' 00000 n \n';
+  xref+='trailer\n<< /Size '+(objs.length+1)+' /Root '+catalog+' 0 R >>\nstartxref\n'+size+'\n%%EOF';
+  chunks.push(xref);
+  return new Blob([Uint8Array.from(chunks.join(''),c=>c.charCodeAt(0)&255)],{type:'application/pdf'});
 }
 async function downloadPDF(){
   const button=$('#print');if(button)button.disabled=true;
