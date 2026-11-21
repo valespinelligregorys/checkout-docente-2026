@@ -164,6 +164,9 @@ function makePDFBlob(){
     const add=(value,priority)=>{
       const v=String(value||'').trim().replace(/^[«“\s]+|[»”\s]+$/g,'');
       if(!v||v.endsWith('...')||v.endsWith('…'))return;
+      // Una cláusula que empieza con conectores dependientes no es una cita autónoma.
+      // Conservamos las palabras literales: no quitamos «y que» para forzar el destaque.
+      if(/^(?:y(?:\s+que)?|e|o|u|pero|aunque|sino|porque|pues|ya\s+que|puesto\s+que|dado\s+que|si\s+bien|mientras\s+que|así\s+que|por\s+lo\s+que|lo\s+cual)\b/i.test(v))return;
       const words=v.match(/[\p{L}\p{N}]+/gu)||[];
       if(words.length<3||words.length>23)return;
       if(wrap('«'+v+'»',font,width,'F4').length>2)return;
