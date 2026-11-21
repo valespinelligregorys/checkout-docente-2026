@@ -15,6 +15,11 @@
   <link rel="stylesheet" href="style.css" />
   <script src="config.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="cloud-config.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js" defer></script>
+  <script src="cloud.js" defer></script>
 </head>
 <body>
   <div class="site-shell">
@@ -29,6 +34,7 @@
       </div>
     </header>
 
+    <section id="cloudArea" class="cloud-area" aria-label="Guardado de tu recorrido" style="max-width:940px;margin:16px auto;padding:12px 20px;border:1px solid #d5d5ca;border-radius:14px" aria-live="polite"></section>
     <main id="app" aria-live="polite"></main>
     <footer class="site-footer"><span>Un cierre para reconocer lo que se aprendió, incluso cuando fue difícil.</span><span>Creado para equipos de Nivel Inicial <span aria-hidden="true">✳</span></span></footer>
   </div>
