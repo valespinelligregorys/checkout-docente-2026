@@ -95,6 +95,65 @@ function question(){state.screen='question';const i=state.index,q=questions[i];c
 function calculate(choices){const counts=Object.fromEntries(Object.keys(profiles).map(k=>[k,0]));choices.forEach(c=>{if(counts[c]!==undefined)counts[c]++});const priority=['exploradora','tejedora','arquitecta','observadora'];const sorted=priority.sort((a,b)=>counts[b]-counts[a]);return{key:sorted[0],counts,secondary:sorted[1]}}
 function payload(){const r=calculate(state.choices);return{type:'checkout_docente_2026',version:1,createdAt:new Date().toISOString(),name:state.name,room:state.room,profile:r.key,counts:r.counts,answers:questions.map((q,i)=>({station:q.station,question:q.title,choice:state.choices[i],reflection:state.reflections[i]}))}}
 function download(){const name=(state.name||'docente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9-]+/g,'-').toLowerCase().slice(0,40);const blob=new Blob([JSON.stringify(payload(),null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`checkout-2026-${name}.json`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);toast('Bitácora descargada')}
+// Descarga de PDF legible (perfil, playlist y reflexiones). No envía datos a terceros.
+// La biblioteca de PDF se carga solo cuando la docente pulsa el botón.
+function loadPdfLibrary(){
+  if(window.jspdf?.jsPDF)return Promise.resolve(window.jspdf.jsPDF);
+  return new Promise((resolve,reject)=>{
+    const script=document.createElement('script');
+    script.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js';
+    script.async=true;
+    const timer=setTimeout(()=>{script.remove();reject(Error('Tiempo de espera agotado'))},16000);
+    script.onload=()=>{clearTimeout(timer);if(window.jspdf?.jsPDF)resolve(window.jspdf.jsPDF);else reject(Error('No se cargó el generador de PDF'))};
+    script.onerror=()=>{clearTimeout(timer);reject(Error('No se pudo cargar el generador de PDF'))};
+    document.head.append(script);
+  });
+}
+async function downloadPDF(){
+  const btn=$('#print');if(btn){btn.disabled=true;btn.textContent='Preparando tu PDF…';}
+  try{
+    const JsPDF=await loadPdfLibrary();
+    const doc=new JsPDF({unit:'mm',format:'a4'});
+    const margin=20, width=170, bottom=274, lineHeight=5.2;
+    let y=22;
+    const checkPage=(needed=8)=>{if(y+needed>bottom){doc.addPage();y=23;}};
+    const addText=(value,{size=10,bold=false,space=3}={})=>{
+      const txt=String(value??'').replace(/[\u{10000}-\u{10FFFF}]/gu,'').replace(/[\u2018\u2019]/g,"'").replace(/[\u201c\u201d]/g,'"').replace(/\u2014/g,'-');
+      doc.setFont('helvetica',bold?'bold':'normal');doc.setFontSize(size);
+      const lines=doc.splitTextToSize(txt||' ',width);
+      const lh=size<=10?lineHeight:Math.max(lineHeight, size*.45);
+      for(const line of lines){checkPage(lh);doc.text(line,margin,y);y+=lh;}
+      y+=space;
+    };
+    const info=calculate(state.choices),profile=profiles[info.key];
+    addText('LO QUE HICIMOS CRECER', {size:17,bold:true,space:5});
+    addText('Check-out docente 2026 | Bitácora personal', {size:11,space:6});
+    if(state.name)addText('Nombre: '+state.name,{bold:true});
+    if(state.room)addText('Sala / rol: '+state.room);
+    addText('Perfil pedagógico: '+profile.name,{size:13,bold:true,space:3});
+    addText(profile.short);
+    addText(profile.description,{space:5});
+    addText('PLAYLIST DEL PERFIL',{size:12,bold:true});
+    for(const [song,artist] of profile.playlist)addText(song+' - '+artist,{space:1});
+    y+=6;
+    addText('MI RECORRIDO Y MIS REFLEXIONES',{size:12,bold:true,space:6});
+    questions.forEach((q,i)=>{
+      checkPage(25);
+      addText((i+1)+'. '+q.station+' | '+q.title,{bold:true,space:2});
+      const selected=q.options.find(([key])=>key===state.choices[i]);
+      addText('Elección: '+(selected?selected[1]:'Sin respuesta'),{space:2});
+      addText(q.reflection,{bold:true,space:1});
+      addText(state.reflections[i].trim()||'(Sin respuesta escrita)',{space:7});
+    });
+    addText('Documento personal. No incluye información del jardín colectivo.',{size:9});
+    const slug=(state.name||'docente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9-]+/g,'-').toLowerCase().slice(0,40);
+    doc.save('bitacora-checkout-2026-'+slug+'.pdf');
+    toast('PDF preparado. Revisá Descargas o Archivos.');
+  }catch(error){
+    alert('El navegador no pudo descargar el PDF directamente. Se abrirá la opción Imprimir: elegí «Guardar como PDF» (o Compartir / Guardar en Archivos en iPhone). Tus respuestas no se pierden.');
+    window.print();
+  }finally{const button=$('#print');if(button){button.disabled=false;button.textContent='Descargar mi bitácora en PDF';}}
+}
 // Conexión: las respuestas largas, los nombres y la sala NUNCA se envían.
 function newSubmissionId(){
   if(globalThis.crypto && typeof crypto.randomUUID==='function')return crypto.randomUUID();
@@ -126,27 +185,29 @@ function jsonp(params={}){
   });
 }
 async function postContribution(fields){
-  // Envío mediante formulario HTML a iframe oculto: evita la limitación de fetch no-cors
-  // y funciona también desde Safari móvil. La confirmación SIEMPRE se comprueba con doGet.
-  return new Promise((resolve,reject)=>{
-    const frame=document.createElement('iframe');frame.name='checkout_write_'+Date.now();
-    frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
-    frame.style.cssText='position:absolute;width:1px;height:1px;left:-9999px;border:0';
-    const form=document.createElement('form');form.method='POST';form.action=API_URL;form.target=frame.name;
-    form.style.display='none';
-    for(const [key,value] of Object.entries(fields)){
-      const input=document.createElement('input');input.type='hidden';input.name=key;input.value=String(value);form.append(input);
-    }
-    let settled=false;
-    const clean=()=>setTimeout(()=>{form.remove();frame.remove()},25000);
-    frame.addEventListener('load',()=>{
-      // No dependemos del contenido del iframe (otro dominio): la lectura verificará el registro.
-      if(!settled){settled=true;clean();resolve();}
+  // Solicitud POST directa, en formato sencillo admitido por Google Apps Script.
+  // Apps Script está en otro dominio: la respuesta POST no es legible desde aquí.
+  // Por eso confirmamos SIEMPRE el registro mediante doGet(check=id).
+  if(!ONLINE)throw Error('El jardín todavía no está conectado con Google.');
+  const body=new URLSearchParams();
+  for(const [key,value] of Object.entries(fields))body.set(key,String(value));
+  let response;
+  try{
+    response=await fetch(API_URL,{
+      method:'POST',
+      mode:'no-cors',
+      credentials:'omit',
+      redirect:'follow',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:body.toString(),
+      cache:'no-store',
+      keepalive:false
     });
-    document.body.append(frame,form);
-    try{form.submit();setTimeout(()=>{if(!settled){settled=true;clean();resolve();}},2500)}
-    catch(error){clean();reject(error)}
-  });
+  }catch(error){
+    throw Error('El navegador no logró enviar el aporte a Google. Abrí el enlace directamente en Safari o Chrome y volvé a intentarlo. ('+(error?.message||'sin detalles')+')');
+  }
+  // La respuesta normalmente será opaque; eso no demuestra éxito ni fracaso.
+  return response;
 }
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function confirmContribution(id){
@@ -161,7 +222,7 @@ function shareUI(){
   return `<div class="panel share-panel no-print" id="sharePanel">
     <span class="eyebrow">Tercer momento · Nuestro jardín colectivo</span>
     <h3>¿Querés sumar tu huella al mapa?</h3>
-    <p>Compartir es opcional. El mapa público muestra tu <strong>perfil pedagógico</strong> y tu <strong>intención elegida para 2027</strong>, pero nunca tu nombre, sala, ni tus reflexiones privadas.</p>
+    <p><strong>Tu participación todavía no se sumó al jardín.</strong> Compartir es opcional y requiere marcar la autorización, ingresar el código del equipo y pulsar «Sumar mi aporte al mapa». El mapa público muestra tu <strong>perfil pedagógico</strong> y tu <strong>intención elegida para 2027</strong>, pero nunca tu nombre, sala, ni tus reflexiones privadas.</p>
     <label class="check-line"><input id="consentProfile" type="checkbox"><span><b>Sí, quiero sumar mi perfil y mi intención al mapa colectivo.</b><small>El mapa será visible para cualquier persona que tenga el enlace de la página.</small></span></label>
     <label class="field-label" for="groupCode">Código del equipo</label>
     <input type="password" id="groupCode" maxlength="80" autocomplete="off" placeholder="El código que compartió la dirección">
@@ -169,7 +230,7 @@ function shareUI(){
     <textarea id="shareQuote" maxlength="160" placeholder="Podés escribir algo nuevo, breve y anónimo. No incluyas nombres ni detalles identificatorios.">${escapeHTML(state.sharedPhrase)}</textarea>
     <label class="check-line"><input id="consentPhrase" type="checkbox" ${state.sharePhrase?'checked':''}><span><b>Autorizo también a publicar esta frase en el mapa.</b><small>Si no marcás esta opción, la frase no se envía.</small></span></label>
     <div class="buttons"><button class="btn" id="sendMap" type="button">Sumar mi aporte al mapa ↗</button><button class="btn secondary" id="skipMap" type="button">Prefiero no compartir</button></div>
-    <p class="micro" id="shareStatus" role="status">Podés seguir al mapa sin enviar ningún dato.</p>
+    <p class="micro" id="shareStatus" role="status" aria-live="assertive">Al tocar «Sumar mi aporte», esperá la confirmación verde. Si aparece un error, no se registró.</p>
   </div>`;
 }
 function bindShare(){
@@ -186,16 +247,17 @@ function bindShare(){
     if(!code){status.textContent='Ingresá el código del equipo para enviar el aporte.';return;}
     if(state.sharePhrase&&!phrase){status.textContent='Escribí una frase o desmarcá la autorización para publicarla.';return;}
     if(!state.submissionId)state.submissionId=newSubmissionId();persist();
-    button.disabled=true;status.textContent='Enviando tu aporte y verificando que se haya registrado…';
+    button.disabled=true;status.textContent='Paso 1 de 2: enviando tu aporte a Google…';status.style.fontWeight='700';status.style.color='#315b43';status.scrollIntoView({block:'nearest',behavior:'smooth'});
     try{
       await postContribution({id:state.submissionId,code,profile:calculate(state.choices).key,priority:state.choices[6],phrase});
+      status.textContent='Paso 2 de 2: comprobando que Google lo guardó…';
       const confirmed=await confirmContribution(state.submissionId);
-      if(!confirmed)throw Error('No pudimos confirmar el registro. Revisá el código del equipo y volvé a intentarlo.');
+      if(!confirmed)throw Error('No se confirmó el registro en Google Sheets. Tu recorrido está guardado, pero el aporte NO figura todavía en el jardín. Revisá el código del equipo y la implementación de Apps Script.');
       state.confirmed=true;persist();
       status.textContent='¡Tu aporte anónimo quedó registrado!';
       $('#sharePanel').innerHTML=`<span class="eyebrow">¡Una huella más!</span><h3>Tu aporte ya forma parte de nuestro jardín 🌱</h3><p>No se enviaron tu nombre, tu sala ni las respuestas abiertas. Gracias por compartir.</p><div class="buttons"><button class="btn" type="button" id="seeShared">Ver nuestro jardín colectivo →</button></div>`;
       $('#seeShared').onclick=mapView;
-    }catch(error){status.textContent=error.message||'No se pudo completar el envío.';button.disabled=false;}
+    }catch(error){status.textContent='⚠ '+(error.message||'No se pudo completar el envío.');status.style.color='#9e352b';button.disabled=false;}
   };
 }
 function result(){
@@ -209,12 +271,12 @@ function result(){
     <div class="panel"><h3>No somos un solo perfil</h3><p>También aparece en tus respuestas una sensibilidad <strong>${escapeHTML(sec.name.toLowerCase().replace('la ',''))}</strong>. Estos perfiles reflejan tus elecciones de hoy, no una identidad permanente.</p><div class="profile-grid">${Object.entries(profiles).map(([k,v])=>`<div class="profile-chip"><b>${escapeHTML(v.name)}</b><span>${r.counts[k]} / 8</span></div>`).join('')}</div></div>
     <div class="panel"><span class="eyebrow">Tu banda sonora</span><h3>Una playlist para seguir creciendo 🎧</h3><p>Estas tres canciones acompañan simbólicamente tu perfil. Abrilas para buscarlas en Spotify; no se reproduce música desde esta página.</p><div class="playlist">${track}</div></div>
     <div class="panel"><span class="eyebrow">Tu bitácora del año</span><h3>Las huellas que elegís guardar</h3>${response}</div>
-    <div class="callout no-print">Tu bitácora completa es privada: guardala como PDF en tu dispositivo. Si autorizás participar en el mapa, se compartirán únicamente tu perfil, tu intención y, si lo elegís, una frase breve.</div>
-    <div class="buttons no-print"><button class="btn" id="print">Guardar como PDF / imprimir</button><button class="btn secondary" id="download">Descargar también mi bitácora (.json)</button><button class="btn ghost" id="edit">Revisar mis respuestas</button></div>
+    <div class="callout no-print">Tu bitácora es privada. Podés descargarla en PDF. Para aparecer en el jardín colectivo debés autorizar y enviar tu aporte al final: completar las preguntas no lo envía automáticamente.</div>
+    <div class="buttons no-print"><button class="btn" id="print" type="button">Descargar mi bitácora en PDF</button><button class="btn ghost" id="edit">Revisar mis respuestas</button></div>
     ${state.confirmed?`<div class="panel no-print"><h3>¡Tu huella ya está en el mapa! 🌿</h3><button class="btn" id="viewAfterShare">Ver jardín colectivo →</button></div>`:shareUI()}
     <div class="buttons no-print"><button class="btn secondary" id="map">Ver jardín colectivo →</button></div>
   </section>`);
-  $('#download').onclick=download;$('#print').onclick=()=>window.print();$('#map').onclick=mapView;$('#edit').onclick=()=>{state.index=0;persist();question()};persist();
+  $('#print').onclick=downloadPDF;$('#map').onclick=mapView;$('#edit').onclick=()=>{state.index=0;persist();question()};persist();
   if(state.confirmed)$('#viewAfterShare').onclick=mapView;else bindShare();
 }
 function mapView(){
@@ -256,7 +318,7 @@ function renderMap(data){
   }).join('');
   const phrases=(Array.isArray(data.phrases)?data.phrases:[]).slice(0,40).map(x=>`<div class="phrase">“${escapeHTML(String(x).slice(0,160))}”</div>`).join('');
   $('#mapTotal').textContent=total;
-  $('#collective').innerHTML=total===0?`<div class="panel empty-map"><span>🌱</span><h3>El jardín está esperando sus primeras huellas.</h3><p>Cuando alguna docente termine su recorrido y autorice compartir su perfil, aparecerá acá.</p></div>`:
+  $('#collective').innerHTML=total===0?`<div class="panel empty-map"><span>🌱</span><h3>El jardín está esperando sus primeras huellas.</h3><p>El mapa solo cuenta participaciones que hayan sido enviadas y confirmadas, no recorridos terminados. Al finalizar, autorizá compartir tu perfil e ingresá el código del equipo para enviar.</p></div>`:
     `<div class="panel"><span class="eyebrow">La diversidad de nuestro equipo</span><h3>Cuatro maneras de florecer</h3><div class="flower-grid">${flowers}</div></div>
      <div class="panel"><span class="eyebrow">Mirando hacia 2027</span><h3>Lo que queremos seguir cultivando</h3><p class="muted">Prioridades construidas a partir de las elecciones del recorrido.</p><div class="priorities">${intentions}</div></div>
      <div class="panel"><span class="eyebrow">Palabras que compartimos</span><h3>Semillas para el próximo ciclo</h3><p class="muted">Frases breves compartidas de manera voluntaria. No incluyen respuestas completas de las bitácoras.</p><div class="phrases">${phrases||'<p class="muted">Todavía no hay frases compartidas.</p>'}</div></div>`;
