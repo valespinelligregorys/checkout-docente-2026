@@ -274,6 +274,7 @@ $('#navMap').onclick=mapView;
 window.checkoutBridge={
   exportDraft:()=>({version:2,updatedAt:new Date().toISOString(),index:state.index,choices:[...state.choices],reflections:[...state.reflections],name:state.name,room:state.room,submissionId:state.submissionId,confirmed:state.confirmed,sharedPhrase:state.sharedPhrase,sharePhrase:state.sharePhrase}),
   hasProgress,
+  resume,
   importDraft:(v)=>{
     if(!v||!Array.isArray(v.choices)||v.choices.length!==8||!Array.isArray(v.reflections)||v.reflections.length!==8)return false;
     state.choices=v.choices.map(x=>Object.hasOwn(profiles,x)?x:null);
